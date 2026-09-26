@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: yomu
+    runtime: docker
+    plan: standard
+    region: singapore
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: DATA_DIR
+        value: /data
+      - key: APP_PASSWORD
+        sync: false
+    disk:
+      name: yomu-data
+      mountPath: /data
+      sizeGB: 1
