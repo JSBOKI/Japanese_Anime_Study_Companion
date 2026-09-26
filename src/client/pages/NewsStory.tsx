@@ -226,13 +226,15 @@ export function NewsStoryPage() {
       {mode === "read" && lang === "en" ? (
         <section className="panel">
           <h2>{story.titleEn || "English"}</h2>
-          <p className="hint">{story.englishNote}</p>
           {story.paragraphsEn.length ? (
-            story.paragraphsEn.map((paragraph) => (
-              <p key={paragraph.slice(0, 48)} className="english-body">
-                {paragraph}
-              </p>
-            ))
+            <>
+              <p className="hint">{story.englishNote}</p>
+              {story.paragraphsEn.map((paragraph) => (
+                <p key={paragraph.slice(0, 48)} className="english-body">
+                  {paragraph}
+                </p>
+              ))}
+            </>
           ) : (
             <p>{story.englishNote}</p>
           )}
