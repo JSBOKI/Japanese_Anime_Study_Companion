@@ -56,7 +56,7 @@ function chatFor(name: LlmName): Chat | null {
   return null;
 }
 
-function parseJson(text: string): { translations?: unknown; notes?: unknown; prose?: unknown } {
+function parseJson(text: string): { translations?: unknown; notes?: unknown; prose?: unknown; title?: unknown; paragraphs?: unknown } {
   const trimmed = text.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
   const start = trimmed.indexOf("{");
   const end = trimmed.lastIndexOf("}");
@@ -130,5 +130,27 @@ export async function enrichLesson(lesson: Lesson): Promise<void> {
     const extra = typeof note === "string" ? note.trim() : "";
     if (!extra) continue;
     item.explanation = `${item.explanation}\n\nIn this episode: ${extra.slice(0, 400)}`;
+  }
+}
+
+export async function translateNews(title: string, paragraphs: string[]): Promise<{ title: string; paragraphs: string[] } | null> {
+  const chat = chatFor(llmName());
+  if (!chat || paragraphs.length === 0) return null;
+  const system = [
+    "Translate this Japanese news article into natural English for an adult reader.",
+    'Return only JSON: {"title": string, "paragraphs": string[]}.',
+    "paragraphs must have one English paragraph for each input paragraph, in the same order.",
+    "Do not add facts that are not in the article. No markdown.",
+  ].join(" ");
+  try {
+    const parsed = parseJson(await chat(system, JSON.stringify({ title, paragraphs })));
+    const outTitle = typeof parsed.title === "string" ? parsed.title.trim() : "";
+    const outParagraphs = Array.isArray(parsed.paragraphs) ? parsed.paragraphs.map((item) => String(item).trim()) : [];
+    if (!outTitle || outParagraphs.length !== paragraphs.length) return null;
+    if (!/[A-Za-z]/.test(`${outTitle} ${outParagraphs.join(" ")}`)) return null;
+    return { title: outTitle, paragraphs: outParagraphs };
+  } catch (error) {
+    console.error("News translation failed", error);
+    return null;
   }
 }

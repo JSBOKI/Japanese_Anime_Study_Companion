@@ -106,7 +106,9 @@ export function ReviewPage() {
             {index + 1} of {queue.cards.length} due now · {queue.dueCount} waiting
           </p>
           <button className="card-face" type="button" onClick={() => setRevealed(true)}>
-            <span className="eyebrow">{card.seriesTitle} · episode {card.episodeNumber}</span>
+            <span className="eyebrow">
+              {card.episodeTitle ? `${card.seriesTitle} · ${card.episodeTitle}` : `${card.seriesTitle} · episode ${card.episodeNumber}`}
+            </span>
             <strong lang="ja">{card.lemma}</strong>
             {revealed ? (
               <>

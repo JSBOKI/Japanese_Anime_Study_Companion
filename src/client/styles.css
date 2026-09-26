@@ -370,7 +370,7 @@ rt { font-family: var(--ui); font-size: 0.48em; color: var(--accent); }
   right: 0;
   bottom: 0;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 6px;
   padding: 8px calc(10px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left));
   background: rgba(255, 250, 243, 0.94);
@@ -390,10 +390,30 @@ rt { font-family: var(--ui); font-size: 0.48em; color: var(--accent); }
 }
 .tabbar a.active { color: var(--accent); }
 .tabbar svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.btn.on { background: var(--indigo); color: #f4f7ff; border-color: transparent; }
+.news-list { display: grid; gap: 12px; }
+.news-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  text-decoration: none;
+  color: inherit;
+}
+.news-card h2 { font-family: var(--jp); font-size: 1.2rem; line-height: 1.45; }
+.news-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); font-size: 0.88rem; }
+.day-chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.lang-toggle, .mode-grid, .speeds { display: grid; gap: 8px; }
+.lang-toggle, .speeds { grid-template-columns: repeat(3, 1fr); }
+.lang-toggle { grid-template-columns: 1fr 1fr; }
+.mode-grid { grid-template-columns: 1fr 1fr; }
+.english-body { font-size: 1.05rem; line-height: 1.55; }
 .tabbar em {
   position: absolute;
   top: 2px;
-  right: calc(50% - 28px);
+  right: 8px;
   background: var(--accent);
   color: white;
   border-radius: 999px;

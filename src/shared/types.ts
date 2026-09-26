@@ -205,6 +205,7 @@ export type ReviewCard = {
   seriesId: number;
   seriesTitle: string;
   episodeNumber: number;
+  episodeTitle: string | null;
   reps: number;
   intervals: { again: string; hard: string; good: string; easy: string };
 };
@@ -227,4 +228,40 @@ export type Stats = {
   cardCount: number;
   knownCount: number;
   seriesCount: number;
+};
+
+export type NewsEnglishSource = "llm" | "nhk-world" | "none";
+
+export type NewsCard = {
+  id: number;
+  title: string;
+  category: string;
+  readingMinutes: number;
+  level: StudyLevel | null;
+  publishedAt: string | null;
+  hasEnglish: boolean;
+  englishSource: NewsEnglishSource;
+};
+
+export type NewsList = {
+  day: string;
+  today: string;
+  days: string[];
+  error: string | null;
+  refreshedAt: string | null;
+  stories: NewsCard[];
+};
+
+export type NewsDetail = NewsCard & {
+  url: string | null;
+  titleEn: string | null;
+  paragraphsJa: string[];
+  paragraphsEn: string[];
+  englishNote: string | null;
+  englishUrl: string | null;
+  lesson: Lesson | null;
+  levelStale: boolean;
+  cardCount: number;
+  audioJa: boolean;
+  audioEn: boolean;
 };

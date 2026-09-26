@@ -8,6 +8,8 @@ import { KnownPage } from "./pages/Known";
 import { LessonPage } from "./pages/Lesson";
 import { LevelPage } from "./pages/Level";
 import { LoginPage } from "./pages/Login";
+import { NewsPage } from "./pages/News";
+import { NewsStoryPage } from "./pages/NewsStory";
 import { NewSeriesPage } from "./pages/NewSeries";
 import { ReviewPage } from "./pages/Review";
 import { SeriesPage } from "./pages/Series";
@@ -50,6 +52,8 @@ export function App() {
           <Route path="new" element={<NewSeriesPage />} />
           <Route path="series/:id" element={<SeriesPage />} />
           <Route path="episodes/:id" element={<LessonPage />} />
+          <Route path="news" element={<NewsPage />} />
+          <Route path="news/:id" element={<NewsStoryPage />} />
           <Route path="review" element={<ReviewPage />} />
           <Route path="known" element={<KnownPage />} />
           <Route path="level" element={<LevelPage />} />

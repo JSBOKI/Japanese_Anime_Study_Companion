@@ -55,3 +55,18 @@ export function jimakuKey(): string | null {
   const key = (process.env.JIMAKU_API_KEY || "").trim();
   return key || null;
 }
+
+/** Hour in Asia/Tokyo for the daily news fetch. Default 6. Invalid values fall back to 6. */
+export function newsFetchHour(): number {
+  const raw = process.env.NEWS_FETCH_HOUR;
+  if (raw === undefined || raw.trim() === "") return 6;
+  const hour = Number(raw);
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return 6;
+  return hour;
+}
+
+/** Optional override for the NHK main RSS URL. Empty uses the public NHK feeds. */
+export function newsRssUrl(): string | null {
+  const raw = (process.env.NEWS_RSS_URL || "").trim();
+  return raw || null;
+}

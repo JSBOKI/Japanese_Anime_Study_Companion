@@ -110,6 +110,33 @@ export function getDb(): DatabaseSync {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS news_stories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_id TEXT NOT NULL UNIQUE,
+      day TEXT NOT NULL,
+      published_at TEXT,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL,
+      url TEXT,
+      body_ja TEXT NOT NULL,
+      body_en TEXT,
+      title_en TEXT,
+      english_source TEXT NOT NULL DEFAULT 'none',
+      english_url TEXT,
+      english_note TEXT,
+      lesson_json TEXT,
+      lesson_level TEXT,
+      reading_minutes INTEGER NOT NULL DEFAULT 1,
+      audio_ja_path TEXT,
+      audio_en_path TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS news_stories_day ON news_stories(day);
+    CREATE TABLE IF NOT EXISTS news_state (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
   db.prepare("UPDATE episodes SET audio_status = 'idle', audio_progress = NULL WHERE audio_status = 'pending'").run();
   database = db;
@@ -165,7 +192,7 @@ const seriesSelect = `
 `;
 
 export function listSeries(): SeriesSummary[] {
-  const rows = getDb().prepare(`${seriesSelect} ORDER BY s.created_at DESC`).all(now()) as SeriesRow[];
+  const rows = getDb().prepare(`${seriesSelect} WHERE COALESCE(s.format, '') != 'news' ORDER BY s.created_at DESC`).all(now()) as SeriesRow[];
   return rows.map(mapSeries);
 }
 
@@ -498,7 +525,9 @@ type CardRow = StoredCard & {
   example_jp: string | null;
   example_en: string | null;
   series_title: string;
+  series_format: string | null;
   episode_number: number;
+  episode_title: string | null;
 };
 
 function levelSql(alias = "c"): string {
@@ -536,7 +565,7 @@ export function listDueCards(seriesId: number | null, limit: number, level: Stud
   }
   params.push(limit);
   return getDb().prepare(
-    `SELECT c.*, s.title AS series_title, e.number AS episode_number
+    `SELECT c.*, s.title AS series_title, s.format AS series_format, e.number AS episode_number, e.title AS episode_title
      FROM cards c
      JOIN series s ON s.id = c.series_id
      JOIN episodes e ON e.id = c.episode_id
@@ -569,7 +598,7 @@ export function cardCounts(seriesId: number | null, level: StudyLevel = DEFAULT_
 
 export function getCardRow(id: number): CardRow | null {
   const row = getDb().prepare(
-    `SELECT c.*, s.title AS series_title, e.number AS episode_number
+    `SELECT c.*, s.title AS series_title, s.format AS series_format, e.number AS episode_number, e.title AS episode_title
      FROM cards c JOIN series s ON s.id = c.series_id JOIN episodes e ON e.id = c.episode_id
      WHERE c.id = ?`,
   ).get(id) as CardRow | undefined;
@@ -650,7 +679,7 @@ export function stats(): Stats {
     dueCount: counts.due,
     cardCount: counts.total,
     knownCount: (db.prepare("SELECT COUNT(*) AS n FROM known_words").get() as { n: number }).n,
-    seriesCount: (db.prepare("SELECT COUNT(*) AS n FROM series").get() as { n: number }).n,
+    seriesCount: (db.prepare("SELECT COUNT(*) AS n FROM series WHERE COALESCE(format, '') != 'news'").get() as { n: number }).n,
   };
 }
 
@@ -703,4 +732,294 @@ export function episodeHasSubtitle(seriesId: number, number: number): boolean {
     | { subtitle_text: string | null }
     | undefined;
   return Boolean(row?.subtitle_text);
+}
+
+export function cardLemmas(): Set<string> {
+  const rows = getDb().prepare("SELECT DISTINCT lemma FROM cards").all() as { lemma: string }[];
+  return new Set(rows.map((row) => row.lemma));
+}
+
+export function ensureNewsSeries(): number {
+  const existing = getDb().prepare("SELECT id FROM series WHERE format = 'news' LIMIT 1").get() as { id: number } | undefined;
+  if (existing) return existing.id;
+  return createSeries({
+    title: "ニュース",
+    titleNative: "ニュース",
+    mediaType: "anime",
+    format: "news",
+    synopsis: "Daily news readings",
+  }).id;
+}
+
+export function ensureNewsEpisode(seriesId: number, storyId: number, title: string): number {
+  const db = getDb();
+  const existing = db.prepare("SELECT id FROM episodes WHERE series_id = ? AND number = ?").get(seriesId, storyId) as
+    | { id: number }
+    | undefined;
+  if (existing) {
+    db.prepare("UPDATE episodes SET title = ? WHERE id = ?").run(title, existing.id);
+    return existing.id;
+  }
+  const info = db.prepare(
+    "INSERT INTO episodes (series_id, number, title, cue_count, new_word_count, audio_status, created_at) VALUES (?, ?, ?, 0, 0, 'idle', ?)",
+  ).run(seriesId, storyId, title, now());
+  return Number(info.lastInsertRowid);
+}
+
+export function addUniqueStoryCards(storyId: number, title: string, vocab: VocabItem[]): { added: number; skipped: number } {
+  const seriesId = ensureNewsSeries();
+  const episodeId = ensureNewsEpisode(seriesId, storyId, title);
+  const existing = cardLemmas();
+  const fresh = vocab.filter((item) => item.lemma && !existing.has(item.lemma));
+  if (fresh.length) syncCards(episodeId, seriesId, fresh);
+  return { added: fresh.length, skipped: vocab.length - fresh.length };
+}
+
+export function newsCardCount(storyId: number): number {
+  const series = getDb().prepare("SELECT id FROM series WHERE format = 'news' LIMIT 1").get() as { id: number } | undefined;
+  if (!series) return 0;
+  const episode = getDb().prepare("SELECT id FROM episodes WHERE series_id = ? AND number = ?").get(series.id, storyId) as
+    | { id: number }
+    | undefined;
+  if (!episode) return 0;
+  return (getDb().prepare("SELECT COUNT(*) AS n FROM cards WHERE episode_id = ?").get(episode.id) as { n: number }).n;
+}
+
+export type NewsState = {
+  ranAt: string | null;
+  attemptedAt: string | null;
+  status: string | null;
+  message: string | null;
+  storyCount: number;
+};
+
+export function getNewsState(): NewsState {
+  const rows = getDb().prepare("SELECT key, value FROM news_state").all() as { key: string; value: string }[];
+  const map = new Map(rows.map((row) => [row.key, row.value]));
+  return {
+    ranAt: map.get("ran_at") || null,
+    attemptedAt: map.get("attempted_at") || null,
+    status: map.get("status") || null,
+    message: map.get("message") || null,
+    storyCount: Number(map.get("story_count") || 0),
+  };
+}
+
+export function setNewsState(patch: { ranAt?: string; attemptedAt?: string; status?: string; message?: string; storyCount?: number }): void {
+  const write = getDb().prepare(
+    "INSERT INTO news_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  );
+  if (patch.ranAt) write.run("ran_at", patch.ranAt);
+  if (patch.attemptedAt) write.run("attempted_at", patch.attemptedAt);
+  if (patch.status !== undefined) write.run("status", patch.status);
+  if (patch.message !== undefined) write.run("message", patch.message);
+  if (patch.storyCount !== undefined) write.run("story_count", String(patch.storyCount));
+}
+
+export type NewsStoryRecord = {
+  id: number;
+  sourceId: string;
+  day: string;
+  publishedAt: string | null;
+  title: string;
+  category: string;
+  url: string | null;
+  bodyJa: string;
+  bodyEn: string | null;
+  titleEn: string | null;
+  englishSource: "llm" | "nhk-world" | "none";
+  englishUrl: string | null;
+  englishNote: string | null;
+  lesson: Lesson | null;
+  lessonLevel: StudyLevel | null;
+  readingMinutes: number;
+  audioJaPath: string | null;
+  audioEnPath: string | null;
+};
+
+type NewsRow = {
+  id: number;
+  source_id: string;
+  day: string;
+  published_at: string | null;
+  title: string;
+  category: string;
+  url: string | null;
+  body_ja: string;
+  body_en: string | null;
+  title_en: string | null;
+  english_source: string;
+  english_url: string | null;
+  english_note: string | null;
+  lesson_json: string | null;
+  lesson_level: string | null;
+  reading_minutes: number;
+  audio_ja_path: string | null;
+  audio_en_path: string | null;
+};
+
+function mapNews(row: NewsRow): NewsStoryRecord {
+  let lesson: Lesson | null = null;
+  if (row.lesson_json) {
+    try {
+      lesson = JSON.parse(row.lesson_json) as Lesson;
+    } catch {
+      lesson = null;
+    }
+  }
+  const source = row.english_source === "llm" || row.english_source === "nhk-world" ? row.english_source : "none";
+  const level = row.lesson_level && isStudyLevel(row.lesson_level) ? row.lesson_level : null;
+  return {
+    id: row.id,
+    sourceId: row.source_id,
+    day: row.day,
+    publishedAt: row.published_at,
+    title: row.title,
+    category: row.category,
+    url: row.url,
+    bodyJa: row.body_ja,
+    bodyEn: row.body_en,
+    titleEn: row.title_en,
+    englishSource: source,
+    englishUrl: row.english_url,
+    englishNote: row.english_note,
+    lesson,
+    lessonLevel: level,
+    readingMinutes: row.reading_minutes,
+    audioJaPath: row.audio_ja_path,
+    audioEnPath: row.audio_en_path,
+  };
+}
+
+const newsColumns = `id, source_id, day, published_at, title, category, url, body_ja, body_en, title_en, english_source, english_url, english_note, lesson_json, lesson_level, reading_minutes, audio_ja_path, audio_en_path`;
+
+export function listNewsStories(day: string): NewsStoryRecord[] {
+  const rows = getDb().prepare(
+    `SELECT ${newsColumns} FROM news_stories WHERE day = ? ORDER BY published_at DESC, id DESC`,
+  ).all(day) as NewsRow[];
+  return rows.map(mapNews);
+}
+
+export function listNewsDays(sinceDay: string): string[] {
+  const rows = getDb().prepare(
+    "SELECT DISTINCT day FROM news_stories WHERE day >= ? ORDER BY day DESC",
+  ).all(sinceDay) as { day: string }[];
+  return rows.map((row) => row.day);
+}
+
+export function getNewsStory(id: number): NewsStoryRecord | null {
+  const row = getDb().prepare(`SELECT ${newsColumns} FROM news_stories WHERE id = ?`).get(id) as NewsRow | undefined;
+  return row ? mapNews(row) : null;
+}
+
+export function upsertNewsStory(input: {
+  sourceId: string;
+  day: string;
+  publishedAt: string | null;
+  title: string;
+  category: string;
+  url: string | null;
+  bodyJa: string;
+  bodyEn: string | null;
+  titleEn: string | null;
+  englishSource: "llm" | "nhk-world" | "none";
+  englishUrl: string | null;
+  englishNote: string | null;
+  lesson: Lesson | null;
+  readingMinutes: number;
+}): number {
+  const db = getDb();
+  const existing = db.prepare(
+    "SELECT id, body_ja, english_source, body_en, title_en, english_url, english_note, lesson_json, lesson_level FROM news_stories WHERE source_id = ?",
+  ).get(input.sourceId) as
+    | {
+        id: number;
+        body_ja: string;
+        english_source: string;
+        body_en: string | null;
+        title_en: string | null;
+        english_url: string | null;
+        english_note: string | null;
+        lesson_json: string | null;
+        lesson_level: string | null;
+      }
+    | undefined;
+  const lessonJson = input.lesson ? JSON.stringify(input.lesson) : null;
+  const lessonLevel = input.lesson?.level || null;
+  const stamp = now();
+  if (!existing) {
+    const info = db.prepare(
+      `INSERT INTO news_stories (
+        source_id, day, published_at, title, category, url, body_ja, body_en, title_en, english_source, english_url, english_note,
+        lesson_json, lesson_level, reading_minutes, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      input.sourceId,
+      input.day,
+      input.publishedAt,
+      input.title,
+      input.category,
+      input.url,
+      input.bodyJa,
+      input.bodyEn,
+      input.titleEn,
+      input.englishSource,
+      input.englishUrl,
+      input.englishNote,
+      lessonJson,
+      lessonLevel,
+      input.readingMinutes,
+      stamp,
+      stamp,
+    );
+    return Number(info.lastInsertRowid);
+  }
+  const bodyChanged = existing.body_ja !== input.bodyJa;
+  const keepEnglish = input.englishSource === "none" && existing.english_source !== "none";
+  db.prepare(
+    `UPDATE news_stories SET
+      published_at = ?, title = ?, category = ?, url = ?, body_ja = ?,
+      body_en = ?, title_en = ?, english_source = ?, english_url = ?, english_note = ?,
+      lesson_json = ?, lesson_level = ?, reading_minutes = ?, updated_at = ?
+     WHERE id = ?`,
+  ).run(
+    input.publishedAt,
+    input.title,
+    input.category,
+    input.url,
+    input.bodyJa,
+    keepEnglish ? existing.body_en : input.bodyEn,
+    keepEnglish ? existing.title_en : input.titleEn,
+    keepEnglish ? existing.english_source : input.englishSource,
+    keepEnglish ? existing.english_url : input.englishUrl,
+    keepEnglish ? existing.english_note : input.englishNote,
+    bodyChanged ? lessonJson : existing.lesson_json,
+    bodyChanged ? lessonLevel : existing.lesson_level,
+    input.readingMinutes,
+    stamp,
+    existing.id,
+  );
+  return existing.id;
+}
+
+export function saveNewsLesson(id: number, lesson: Lesson): void {
+  getDb().prepare("UPDATE news_stories SET lesson_json = ?, lesson_level = ?, updated_at = ? WHERE id = ?").run(
+    JSON.stringify(lesson),
+    lesson.level,
+    now(),
+    id,
+  );
+}
+
+export function setNewsAudioPath(id: number, lang: "ja" | "en", file: string): void {
+  const column = lang === "ja" ? "audio_ja_path" : "audio_en_path";
+  getDb().prepare(`UPDATE news_stories SET ${column} = ?, updated_at = ? WHERE id = ?`).run(file, now(), id);
+}
+
+export function pruneNewsStories(beforeDay: string): { id: number; audioJaPath: string | null; audioEnPath: string | null }[] {
+  const rows = getDb().prepare(
+    "SELECT id, audio_ja_path, audio_en_path FROM news_stories WHERE day < ?",
+  ).all(beforeDay) as { id: number; audio_ja_path: string | null; audio_en_path: string | null }[];
+  if (rows.length) getDb().prepare("DELETE FROM news_stories WHERE day < ?").run(beforeDay);
+  return rows.map((row) => ({ id: row.id, audioJaPath: row.audio_ja_path, audioEnPath: row.audio_en_path }));
 }

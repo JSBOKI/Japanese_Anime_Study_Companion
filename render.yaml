@@ -14,6 +14,11 @@ services:
         value: /data
       - key: APP_PASSWORD
         sync: false
+      # Optional. Leave unset. News fetches NHK at 6:00 Asia/Tokyo.
+      # NEWS_FETCH_HOUR is the hour in Asia/Tokyo (0-23). Default 6.
+      # NEWS_RSS_URL overrides the main NHK RSS URL. If it contains cat0.xml,
+      # the category feeds are derived from it. A bad URL fails the fetch and
+      # keeps stories already stored on the disk.
     disk:
       name: yomu-data
       mountPath: /data

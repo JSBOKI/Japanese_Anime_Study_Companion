@@ -52,6 +52,10 @@ export function Layout() {
           <LibraryIcon />
           Library
         </NavLink>
+        <NavLink to="/news">
+          <NewsIcon />
+          News
+        </NavLink>
         <NavLink to="/review">
           <CardsIcon />
           Review
@@ -71,6 +75,15 @@ function LibraryIcon() {
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M5 4.5h9.5A2.5 2.5 0 0 1 17 7v12.5H7.2A2.2 2.2 0 0 0 5 21.7V4.5Z" />
       <path d="M17 7h2.2A1.8 1.8 0 0 1 21 8.8V19a2 2 0 0 1-2 2h-2" />
+    </svg>
+  );
+}
+
+function NewsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M5 5.5h14v13H5z" />
+      <path d="M8 9h8M8 12.5h8M8 16h5" />
     </svg>
   );
 }
