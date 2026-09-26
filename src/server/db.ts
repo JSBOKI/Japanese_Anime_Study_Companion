@@ -7,8 +7,11 @@ import type {
   Lesson,
   SeriesSummary,
   Stats,
+  StudyLevel,
+  StudySettings,
   VocabItem,
 } from "../shared/types.ts";
+import { DEFAULT_FURIGANA, DEFAULT_LEVEL, DEFAULT_PASSAGE, isFuriganaMode, isPassageLength, isStudyLevel, levelRank } from "./level.ts";
 import { emptyStoredCard, fromStored, toStored, type StoredCard } from "./srs.ts";
 import type { Card } from "ts-fsrs";
 
@@ -103,6 +106,10 @@ export function getDb(): DatabaseSync {
       PRIMARY KEY (series_id, episode_number, kind, item_key)
     );
     CREATE INDEX IF NOT EXISTS cards_due ON cards(due);
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
   db.prepare("UPDATE episodes SET audio_status = 'idle', audio_progress = NULL WHERE audio_status = 'pending'").run();
   database = db;
@@ -494,8 +501,34 @@ type CardRow = StoredCard & {
   episode_number: number;
 };
 
-export function listDueCards(seriesId: number | null, limit: number): CardRow[] {
-  const params: (string | number)[] = [now()];
+function levelSql(alias = "c"): string {
+  return `(CASE ${alias}.jlpt WHEN 'N5' THEN 5 WHEN 'N4' THEN 4 WHEN 'N3' THEN 3 WHEN 'N2' THEN 2 WHEN 'N1' THEN 1 ELSE 0 END) <= ?`;
+}
+
+export function getStudySettings(): StudySettings {
+  const rows = getDb().prepare("SELECT key, value FROM settings").all() as { key: string; value: string }[];
+  const map = new Map(rows.map((row) => [row.key, row.value]));
+  const level = map.get("level");
+  const passage = map.get("passage");
+  const furigana = map.get("furigana");
+  return {
+    level: level && isStudyLevel(level) ? level : DEFAULT_LEVEL,
+    passage: passage && isPassageLength(passage) ? passage : DEFAULT_PASSAGE,
+    furigana: furigana && isFuriganaMode(furigana) ? furigana : DEFAULT_FURIGANA,
+  };
+}
+
+export function saveStudySettings(input: StudySettings): StudySettings {
+  const db = getDb();
+  const write = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+  write.run("level", input.level);
+  write.run("passage", input.passage);
+  write.run("furigana", input.furigana);
+  return getStudySettings();
+}
+
+export function listDueCards(seriesId: number | null, limit: number, level: StudyLevel = DEFAULT_LEVEL): CardRow[] {
+  const params: (string | number)[] = [now(), levelRank(level)];
   let filter = "";
   if (seriesId) {
     filter = "AND c.series_id = ?";
@@ -507,23 +540,30 @@ export function listDueCards(seriesId: number | null, limit: number): CardRow[] 
      FROM cards c
      JOIN series s ON s.id = c.series_id
      JOIN episodes e ON e.id = c.episode_id
-     WHERE c.due <= ? ${filter}
+     WHERE c.due <= ? AND ${levelSql("c")} ${filter}
      ORDER BY c.due ASC
      LIMIT ?`,
   ).all(...params) as CardRow[];
 }
 
-export function cardCounts(seriesId: number | null): { due: number; total: number; nextDue: string | null } {
+export function cardCounts(seriesId: number | null, level: StudyLevel = DEFAULT_LEVEL): { due: number; total: number; nextDue: string | null } {
   const db = getDb();
-  const total = seriesId
-    ? (db.prepare("SELECT COUNT(*) AS n FROM cards WHERE series_id = ?").get(seriesId) as { n: number }).n
-    : (db.prepare("SELECT COUNT(*) AS n FROM cards").get() as { n: number }).n;
-  const due = seriesId
-    ? (db.prepare("SELECT COUNT(*) AS n FROM cards WHERE series_id = ? AND due <= ?").get(seriesId, now()) as { n: number }).n
-    : (db.prepare("SELECT COUNT(*) AS n FROM cards WHERE due <= ?").get(now()) as { n: number }).n;
-  const next = seriesId
-    ? (db.prepare("SELECT MIN(due) AS due FROM cards WHERE series_id = ? AND due > ?").get(seriesId, now()) as { due: string | null })
-    : (db.prepare("SELECT MIN(due) AS due FROM cards WHERE due > ?").get(now()) as { due: string | null });
+  const rank = levelRank(level);
+  const seriesSql = seriesId ? "AND series_id = ?" : "";
+  const seriesParams = seriesId ? [seriesId] : [];
+  const total = (
+    db.prepare(`SELECT COUNT(*) AS n FROM cards WHERE ${levelSql("cards")} ${seriesSql}`).get(rank, ...seriesParams) as { n: number }
+  ).n;
+  const due = (
+    db.prepare(`SELECT COUNT(*) AS n FROM cards WHERE due <= ? AND ${levelSql("cards")} ${seriesSql}`).get(now(), rank, ...seriesParams) as {
+      n: number;
+    }
+  ).n;
+  const next = db.prepare(`SELECT MIN(due) AS due FROM cards WHERE due > ? AND ${levelSql("cards")} ${seriesSql}`).get(
+    now(),
+    rank,
+    ...seriesParams,
+  ) as { due: string | null };
   return { due, total, nextDue: next.due };
 }
 
@@ -605,12 +645,35 @@ export function cardsForExport(filter: { seriesId?: number; episodeId?: number }
 
 export function stats(): Stats {
   const db = getDb();
+  const counts = cardCounts(null, getStudySettings().level);
   return {
-    dueCount: (db.prepare("SELECT COUNT(*) AS n FROM cards WHERE due <= ?").get(now()) as { n: number }).n,
-    cardCount: (db.prepare("SELECT COUNT(*) AS n FROM cards").get() as { n: number }).n,
+    dueCount: counts.due,
+    cardCount: counts.total,
     knownCount: (db.prepare("SELECT COUNT(*) AS n FROM known_words").get() as { n: number }).n,
     seriesCount: (db.prepare("SELECT COUNT(*) AS n FROM series").get() as { n: number }).n,
   };
+}
+
+export function listSubtitleJobs(): { seriesId: number; number: number; title: string | null; filename: string; text: string }[] {
+  const rows = getDb().prepare(
+    `SELECT series_id, number, title, subtitle_name, subtitle_text
+     FROM episodes
+     WHERE subtitle_text IS NOT NULL AND subtitle_text != ''
+     ORDER BY series_id, number`,
+  ).all() as {
+    series_id: number;
+    number: number;
+    title: string | null;
+    subtitle_name: string | null;
+    subtitle_text: string;
+  }[];
+  return rows.map((row) => ({
+    seriesId: row.series_id,
+    number: row.number,
+    title: row.title,
+    filename: row.subtitle_name || "episode.srt",
+    text: row.subtitle_text,
+  }));
 }
 
 export function getSubtitle(episodeId: number): { seriesId: number; number: number; filename: string; text: string } | null {

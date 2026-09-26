@@ -19,7 +19,7 @@ The first start downloads a public Japanese-English dictionary (JMdict common wo
 
 ### Try the sample
 
-`sample/episode-01-morning-platform.ja.srt` and `sample/episode-02-after-work.ja.srt` are original dialogue, not lines from a broadcast show.
+`sample/episode-01-morning-platform.ja.srt` and `sample/episode-02-after-work.ja.srt` are short original scenes. `sample/episode-03-late-office.ja.srt` is a longer original office scene, written for an N2 reading: several hundred characters in a row, with N2 and N1 words and spoken contractions. None of them are lines from a broadcast show.
 
 1. Choose **Add a series** and enter a title, or choose **Try the sample scene** on the home page.
 2. On the series page, upload `sample/episode-01-morning-platform.ja.srt`.
@@ -28,6 +28,19 @@ The first start downloads a public Japanese-English dictionary (JMdict common wo
 5. On the lesson page, wait for the dialogue drill. Play it in the browser or download the MP3.
 
 Upload episode 2 after episode 1 and the second lesson will not teach the same words and grammar again as if they were new.
+
+## Level
+
+The default is **N2**. Open **Level** from the chip in the header, or from the level button on a lesson.
+
+- **N5–N1** chooses which vocabulary and grammar are taught. Words and patterns easier than that band are left out of the lesson, the flashcards, and the audio drills. Cards you already reviewed stay in the database; they simply stop appearing in Review while your level is above them.
+- **Scene** groups the subtitles into a contiguous stretch of a few hundred characters. **Longer** keeps going, aiming past about nine hundred characters when the episode has that much dialogue.
+- **Furigana** can follow the level (readings only on kanji harder than your band), cover every kanji, or stay off. Tap a word either way.
+- At **N3, N2, and N1**, English on the passage stays hidden until you tap **English**. N5 and N4 leave it open.
+
+Changing the level does not rewrite lessons by itself. On the lesson, choose **Rebuild this lesson** when the banner says the reading was built at another level. On the Level page, **Rebuild every lesson** does the same for each uploaded subtitle, in episode order. Review history on the cards is kept. The dialogue MP3 is generated again.
+
+No new environment variable controls this. The choice is stored in SQLite on the data volume. `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, already optional, replaces the built-in Japanese reading guide with a prose recap at the chosen level. Without a key, the guide is composed from the episode itself.
 
 You can also upload `.ass`, `.ssa`, `.vtt`, or a `.zip` of those files. Shift-JIS subtitles are decoded automatically. A number in the filename (`episode 01`, `E02`, `第3話`) chooses the episode. On an iPhone, the file button opens Files and does not hide subtitles the picker does not recognize.
 
@@ -86,7 +99,7 @@ Copy `.env.example` to `.env`.
 | `VOICEVOX_SPEAKER` | Default `2` (四国めたん on a normal VOICEVOX install). English lines still use Edge. |
 | `JIMAKU_API_KEY` | Personal key from [jimaku.cc](https://jimaku.cc). Sent as the `Authorization` header. |
 
-With an LLM configured, each lesson adds a natural English line under the dialogue and one short note on how each grammar point shows up in that episode. The built-in explanation stays either way. If the model call fails, the dictionary lesson is kept.
+With an LLM configured, each lesson adds a natural English line under the dialogue, one short note on how each grammar point shows up in that episode, and a Japanese prose recap of the scene at your level. The built-in explanation stays either way. If the model call fails, the dictionary lesson is kept, including the composed reading guide.
 
 ## Tests
 

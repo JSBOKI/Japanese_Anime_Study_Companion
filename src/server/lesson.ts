@@ -1,17 +1,32 @@
 import type { Cue } from "./subtitles.ts";
 import { tokenize, type Token } from "./tokenizer.ts";
 import { bestReading, friendlyPos, jlptOf, lookupKanji, lookupWord } from "./dictionary.ts";
-import { hasKanji, hasKatakana, kanjiChars } from "./kana.ts";
+import { hasKanji, kanjiChars } from "./kana.ts";
 import {
   endersExplanation,
   endersIn,
   endersName,
   matchPatternIds,
+  patternInRange,
   patternInfo,
+  patternLevel,
 } from "./grammar.ts";
 import { llmName } from "./config.ts";
 import { enrichLesson } from "./llm.ts";
-import type { GrammarItem, GrammarNote, Lesson, LessonLine, LineToken, ReviewVocab, VocabItem } from "../shared/types.ts";
+import {
+  DEFAULT_LEVEL,
+  DEFAULT_PASSAGE,
+  grammarCap,
+  isEasierThan,
+  isHarderThan,
+  levelRank,
+  revealEnglishByDefault,
+  vocabCap,
+  type StudyLevel,
+} from "./level.ts";
+import type { PassageLength } from "./level.ts";
+import { buildPassages, composeProse } from "./passages.ts";
+import type { GrammarItem, GrammarNote, Lesson, LessonLine, LineToken, ProseReading, ReviewVocab, VocabItem } from "../shared/types.ts";
 
 const SKIP_LEMMAS = new Set(["の", "よう", "さん", "くん", "ちゃん", "さま", "様", "ちゃん"]);
 
@@ -59,7 +74,11 @@ export async function buildLesson(input: {
   known: Set<string>;
   taughtVocab: Set<string>;
   taughtGrammar: Set<string>;
+  level?: StudyLevel;
+  passage?: PassageLength;
 }): Promise<Lesson> {
+  const level = input.level || DEFAULT_LEVEL;
+  const passage = input.passage || DEFAULT_PASSAGE;
   const analyzed = input.cues.map((cue) => ({ cue, tokens: tokenize(cue.text) }));
   const vocab = new Map<string, Accum>();
 
@@ -88,15 +107,26 @@ export async function buildLesson(input: {
     }
   }
 
-  const ranked = [...vocab.values()].map((row) => ({ row, score: scoreRow(row) })).sort((a, b) => b.score - a.score);
+  const ranked = [...vocab.values()]
+    .map((row) => ({ row, score: scoreRow(row, level) }))
+    .filter((item) => item.score > -1000)
+    .sort((a, b) => b.score - a.score);
 
   const vocabulary: VocabItem[] = [];
   const reviewVocabulary: ReviewVocab[] = [];
   let carriedOver = 0;
   let skippedKnown = 0;
+  let skippedEasy = 0;
   const newLemmas = new Set<string>();
+  const cap = vocabCap(level);
 
   for (const { row, score } of ranked) {
+    const jlpt = jlptOf(row.lemma, row.reading);
+    if (isEasierThan(jlpt, level)) {
+      skippedEasy += 1;
+      continue;
+    }
+    if (levelRank(level) <= 3 && row.detail === "固有名詞") continue;
     if (score < 8 && row.count < 2 && !lookupWord(row.lemma, row.reading)) continue;
     if (input.known.has(row.lemma)) {
       skippedKnown += 1;
@@ -115,7 +145,7 @@ export async function buildLesson(input: {
       }
       continue;
     }
-    if (vocabulary.length >= 16) continue;
+    if (vocabulary.length >= cap) continue;
     vocabulary.push(toVocab(row));
     newLemmas.add(row.lemma);
   }
@@ -140,15 +170,24 @@ export async function buildLesson(input: {
   const grammarReview: GrammarNote[] = [];
   const alsoNoticed: GrammarNote[] = [];
   const rankedPatterns = [...patternHits.entries()].sort((a, b) => {
+    const distance = (id: string) => levelRank(level) - levelRank(patternLevel(id));
+    const da = distance(a[0]);
+    const db = distance(b[0]);
+    if (da !== db) return da - db;
     const pa = patternInfo(a[0])?.priority || 0;
     const pb = patternInfo(b[0])?.priority || 0;
     return pb - pa || b[1].count - a[1].count;
   });
 
   const newPatternIds = new Set<string>();
+  const grammarLimit = grammarCap(level);
   for (const [id, hit] of rankedPatterns) {
     const info = patternInfo(id);
     if (!info) continue;
+    if (!patternInRange(id, level)) {
+      skippedEasy += 1;
+      continue;
+    }
     const enders = [...hit.enders];
     const name = id === "enders" ? endersName(enders) : info.name;
     const explanation = id === "enders" ? endersExplanation(enders) : info.explanation;
@@ -157,7 +196,7 @@ export async function buildLesson(input: {
       grammarReview.push(note);
       continue;
     }
-    if (grammar.length < 8) {
+    if (grammar.length < grammarLimit) {
       grammar.push({ id, name, explanation, examples: hit.examples, count: hit.count });
       newPatternIds.add(id);
     } else {
@@ -169,7 +208,7 @@ export async function buildLesson(input: {
     const patternIds = matchPatternIds(cue.text, tokens);
     const featured =
       tokens.some((token) => newLemmas.has(token.lemma)) || patternIds.some((id) => newPatternIds.has(id));
-    const lineTokens = tokens.map((token) => toLineToken(token));
+    const lineTokens = tokens.map((token) => toLineToken(token, level));
     return {
       index: cue.index,
       start: cue.start,
@@ -195,17 +234,31 @@ export async function buildLesson(input: {
     if (line) item.exampleEn = line.gloss;
   }
 
+  const passages = buildPassages(lines, passage);
+  const composed = composeProse(lines, level);
+  const prose: ProseReading = {
+    ...composed,
+    tokens: tokenize(composed.text).map((token) => toLineToken(token, level)),
+  };
+
   const summary = summarize({
-    lineCount: lines.length,
+    level,
+    passageCount: passages.length,
+    passageChars: passages.reduce((sum, item) => sum + item.charCount, 0),
     newWords: vocabulary.length,
     grammarCount: grammar.length,
     carriedOver,
     skippedKnown,
+    skippedEasy,
+    revealEnglish: revealEnglishByDefault(level),
   });
 
   const lesson: Lesson = {
     generatedAt: new Date().toISOString(),
     llm: llmName(),
+    level,
+    passage,
+    revealEnglish: revealEnglishByDefault(level),
     summary,
     vocabulary,
     reviewVocabulary,
@@ -213,22 +266,33 @@ export async function buildLesson(input: {
     grammarReview,
     alsoNoticed,
     lines,
+    passages,
+    prose,
     carriedOver,
     skippedKnown,
+    skippedEasy,
   };
 
   if (lesson.llm !== "none") {
     try {
       await enrichLesson(lesson);
+      if (lesson.prose && lesson.prose.source === "llm") {
+        lesson.prose.tokens = tokenize(lesson.prose.text).map((token) => toLineToken(token, level));
+      }
     } catch (error) {
       console.warn("LLM enrichment failed, keeping dictionary lesson.", error);
       lesson.llm = "none";
+      lesson.prose = prose;
       lesson.summary = summarize({
-        lineCount: lines.length,
+        level,
+        passageCount: passages.length,
+        passageChars: passages.reduce((sum, item) => sum + item.charCount, 0),
         newWords: vocabulary.length,
         grammarCount: grammar.length,
         carriedOver,
         skippedKnown,
+        skippedEasy,
+        revealEnglish: lesson.revealEnglish,
       });
     }
   }
@@ -236,24 +300,30 @@ export async function buildLesson(input: {
 }
 
 function summarize(input: {
-  lineCount: number;
+  level: StudyLevel;
+  passageCount: number;
+  passageChars: number;
   newWords: number;
   grammarCount: number;
   carriedOver: number;
   skippedKnown: number;
+  skippedEasy: number;
+  revealEnglish: boolean;
 }): string {
-  const parts = [`${input.lineCount} spoken lines.`];
+  const parts = [
+    `${input.level} reading. ${input.passageCount} passage${input.passageCount === 1 ? "" : "s"}, ${input.passageChars} characters of dialogue in a row.`,
+  ];
   parts.push(
     input.newWords
-      ? `${input.newWords} new words, chosen by how often they show up and how useful they are early on.`
-      : "No new words. This episode mostly reuses vocabulary from earlier episodes.",
+      ? `${input.newWords} words at ${input.level} or harder, weighted by how often they appear.`
+      : `No new words at ${input.level} or above. The scene may be easier than this level, or you have already studied its vocabulary.`,
   );
-  if (input.grammarCount) parts.push(`${input.grammarCount} grammar points that actually appear in the dialogue.`);
-  if (input.carriedOver) parts.push(`${input.carriedOver} words were left out of the new list because an earlier episode already taught them.`);
+  if (input.grammarCount) parts.push(`${input.grammarCount} grammar points at this level that actually appear.`);
+  if (input.skippedEasy) parts.push(`${input.skippedEasy} easier words or patterns were left out so the lesson does not drop back to beginner material.`);
+  if (input.carriedOver) parts.push(`${input.carriedOver} words were already taught in an earlier episode.`);
   if (input.skippedKnown) parts.push(`${input.skippedKnown} words were skipped because you marked them known.`);
-  if (llmName() === "none") {
-    parts.push("The English under each line is a dictionary gloss, in word order, not a polished translation.");
-  }
+  if (!input.revealEnglish) parts.push("English stays hidden until you tap a passage or a word.");
+  else if (llmName() === "none") parts.push("The English is a dictionary gloss, in word order, not a polished translation.");
   return parts.join(" ");
 }
 
@@ -269,16 +339,19 @@ function keepToken(token: Token): boolean {
   return true;
 }
 
-function scoreRow(row: Accum): number {
+function scoreRow(row: Accum, level: StudyLevel): number {
   const entry = lookupWord(row.lemma, row.reading);
   const jlpt = jlptOf(row.lemma, row.reading);
-  let score = row.count * 12;
-  score += { N5: 40, N4: 32, N3: 20, N2: 12, N1: 8 }[jlpt || ""] || 0;
-  if (!jlpt && entry) score += 10;
-  if (!entry) score -= 6;
-  if (row.detail === "固有名詞") score -= 8;
-  if (row.pos === "感動詞") score -= 4;
-  if (row.lemma.length === 1 && !hasKanji(row.lemma)) score -= 8;
+  if (isEasierThan(jlpt, level)) return -1000;
+  let score = row.count * 14;
+  if (jlpt === level) score += 70;
+  else if (jlpt && isHarderThan(jlpt, level)) score += 48;
+  else if (!jlpt && entry) score += 36;
+  if (!entry) score -= 8;
+  if (hasKanji(row.lemma)) score += 10;
+  if (row.detail === "固有名詞") score -= 20;
+  if (row.pos === "感動詞") score -= 12;
+  if (row.lemma.length === 1 && !hasKanji(row.lemma)) score -= 10;
   return score;
 }
 
@@ -318,12 +391,14 @@ function toVocab(row: Accum): VocabItem {
   };
 }
 
-function toLineToken(token: Token): LineToken {
+function toLineToken(token: Token, level: StudyLevel): LineToken {
   const entry = isContent(token) ? lookupWord(token.lemma, token.reading) : null;
+  const jlpt = jlptOf(token.lemma, token.reading);
   const showReading =
     Boolean(token.reading) &&
     token.reading !== token.surface &&
-    (hasKanji(token.surface) || (hasKatakana(token.surface) && [...token.surface].length >= 2));
+    hasKanji(token.surface) &&
+    isHarderThan(jlpt, level);
   return {
     surface: token.surface,
     lemma: token.lemma,

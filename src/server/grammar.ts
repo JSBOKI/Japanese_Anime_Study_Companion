@@ -1,3 +1,5 @@
+import type { StudyLevel } from "./level.ts";
+import { levelRank } from "./level.ts";
 import type { Token } from "./tokenizer.ts";
 
 export type PatternInfo = {
@@ -181,12 +183,250 @@ const PATTERNS: PatternInfo[] = [
     explanation:
       "ないで before another verb means “without doing” the first action. ないでください is a polite “please don’t.” It is different from なくて, which is the て-form of the negative and shows up in なくていい (“don’t have to”).",
   },
+  {
+    id: "wake",
+    name: "わけだ / わけではない",
+    priority: 92,
+    reminder: "わけ — the logic of the situation, or a denial that it is that simple.",
+    explanation:
+      "わけだ states a conclusion that follows from what was just said: “so that means…” わけではない pulls the other way: “that is not the whole reason” or “it does not follow that…” わけがない is stronger, “there is no way.” わけにはいかない means you cannot do it, not because it is impossible, but because circumstances or duty rule it out. Anime characters use わけじゃない constantly to refuse a simple reading of their motives.",
+  },
+  {
+    id: "youni",
+    name: "ようにする / ようになる",
+    priority: 70,
+    reminder: "ようにする — make yourself do it. ようになる — reach the point where it happens.",
+    explanation:
+      "ようにする is an effort you keep up: 遅れてこないようにする, “I’ll make sure not to be late.” ようになる is a change of state you have arrived at: 読めるようになった, “I’ve gotten to where I can read it.” A plain ように before a verb can also mean “so that” or “in the way that.”",
+  },
+  {
+    id: "hazu",
+    name: "はず",
+    priority: 69,
+    reminder: "はず — a conclusion you expect to be true.",
+    explanation:
+      "はず marks what ought to be the case from evidence or logic. 届いているはずだ is “it should have arrived.” はずがない denies that expectation. It is not a promise. When a character says はず, they are often one step away from being wrong.",
+  },
+  {
+    id: "noni",
+    name: "のに",
+    priority: 67,
+    reminder: "のに — “even though,” usually with frustration.",
+    explanation:
+      "のに connects a fact to an outcome that refuses to follow from it. 言ったのに、聞いてない is “I told you, and yet you didn’t listen.” The complaint is built into the grammar. のに at the end of a sentence can trail off and leave the disappointment hanging.",
+  },
+  {
+    id: "tame",
+    name: "ために",
+    priority: 65,
+    reminder: "ために — purpose (“in order to”) or cause (“because of”).",
+    explanation:
+      "After a verb, ために usually means purpose: 間に合わせるために夜を潰す, “stay up so it is ready in time.” After a noun it is often a cause: 雨のために遅れた, “delayed because of the rain.” Context tells the two apart. Purpose ために points forward; cause ために points back.",
+  },
+  {
+    id: "nimokakawarazu",
+    name: "にもかかわらず",
+    priority: 91,
+    reminder: "にもかかわらず — “despite,” more formal than のに.",
+    explanation:
+      "にもかかわらず concedes a fact and then goes against it. 時間がないにもかかわらず、雑な案は出せない is “despite having no time, we still cannot send a sloppy proposal.” It is the written and adult-speech version of the complaint in のに, with less whining and more stance.",
+  },
+  {
+    id: "zaruoenai",
+    name: "ざるを得ない",
+    priority: 90,
+    reminder: "ざるを得ない — “have no choice but to.”",
+    explanation:
+      "ざるを得ない is a reluctant obligation. やらざるを得ない means “I have no choice but to do it,” not “I want to.” ざる is classical negative, so the verb is in the ない-stem: する → せざる, 見る → 見ざる. You will meet it when a character is boxed in by work, duty, or a promise.",
+  },
+  {
+    id: "chigainai",
+    name: "に違いない",
+    priority: 89,
+    reminder: "に違いない — a firm “it must be.”",
+    explanation:
+      "に違いない is conviction, stronger than だろう and cooler than はず. 本音はそこだに違いない is “that has to be what they really mean.” The speaker is not asking you to agree. They are closing the case. に相違ない is the stiffer written twin.",
+  },
+  {
+    id: "naikotoniwa",
+    name: "ないことには",
+    priority: 88,
+    reminder: "ないことには — “unless that happens, the rest cannot.”",
+    explanation:
+      "ないことには says a later step is blocked until something else is done. 直さないことには、明日に間に合わない is “unless we fix it, it will not be ready tomorrow.” The second half is almost always negative or impossible. It is a working adult’s “we cannot move until.”",
+  },
+  {
+    id: "monono",
+    name: "ものの",
+    priority: 86,
+    reminder: "ものの — “although,” conceding before the real point.",
+    explanation:
+      "ものの grants the first clause and then limits it. 分かっているものの、今は動けない is “I do understand, and yet I cannot move now.” It is more written than けど, and it usually introduces the difficulty that remains after the concession.",
+  },
+  {
+    id: "nishitemo",
+    name: "にしても",
+    priority: 85,
+    reminder: "にしても — “even granting that.”",
+    explanation:
+      "にしても accepts a point only to say it does not settle the matter. 予算が厳しいにしても、この前提は外せない is “even if the budget is tight, we still cannot drop this premise.” それにしても (“even so”) comments on the whole situation rather than one noun.",
+  },
+  {
+    id: "kaneru",
+    name: "かねる / かねない",
+    priority: 84,
+    reminder: "かねる — cannot bring oneself to. かねない — there is a real risk.",
+    explanation:
+      "かねる attached to the masu-stem means the speaker finds it hard or improper to do something: 同意しかねる, “I cannot go along with that.” かねない is the opposite warning: 突き返されかねない, “they may well send it back.” かねない is not “unable.” It is “all too able to go wrong.”",
+  },
+  {
+    id: "naradeha",
+    name: "ならでは",
+    priority: 83,
+    reminder: "ならでは — “unique to,” something only this situation produces.",
+    explanation:
+      "ならでは says a quality exists because of this person or this case and would not otherwise. この案件ならではの線引き is “a line that only this deal would force us to draw.” It is praise or a precise limitation, not a general “if.”",
+  },
+  {
+    id: "seide",
+    name: "せいで / おかげで",
+    priority: 80,
+    reminder: "せいで blames a cause. おかげで gives credit.",
+    explanation:
+      "せいで pins a bad result on a cause, sometimes unfairly. 準備不足のせいで遅れた is “we are late because the prep was thin.” おかげで does the same job with a good, or sarcastic, result. The grammar is a judgment about whose fault or whose merit it is.",
+  },
+  {
+    id: "tamaranai",
+    name: "てしょうがない / てたまらない",
+    priority: 78,
+    reminder: "てしょうがない — a feeling too strong to sit on.",
+    explanation:
+      "てしょうがない and てたまらない attach to a feeling or state and say it is overwhelming. 気になってしょうがない is “I cannot stop turning it over.” てならない is the more written shape. These are not commands. They report a pressure inside the speaker.",
+  },
+  {
+    id: "kkonai",
+    name: "っこない",
+    priority: 76,
+    reminder: "っこない — blunt “no way that happens.”",
+    explanation:
+      "っこない is a rough spoken rejection of a possibility. 間に合いっこない is “there is no way we make it.” It comes from ことはない and is stronger, and ruder, than わけがない. Common when a character is done pretending.",
+  },
+  {
+    id: "contractions",
+    name: "Spoken contractions",
+    priority: 94,
+    reminder: "ちゃう, とく, なきゃ, じゃん, っけ — the full grammar, said fast.",
+    explanation:
+      "Adult dialogue rarely leaves てしまう, ておく, なければ, or の intact. ちゃう and じゃう are てしまう: 出しちゃった is “I went and sent it,” often with a sting of regret. とく and どく are ておく: 残しとく means “I’ll leave it in place for later,” not “I’ll leave it forever.” なきゃ and なくちゃ are なければならない with the ending dropped. じゃん demands agreement the way ではないか does, and っけ reaches back for a memory the speaker is no longer sure of. Read the short form as the full pattern, then notice the attitude the shortening adds.",
+  },
+  {
+    id: "jan",
+    name: "じゃん",
+    priority: 74,
+    reminder: "じゃん — “isn’t it,” pushing you to see it too.",
+    explanation:
+      "じゃん is the casual descendant of ではないか. 崩れてるじゃん means “it’s already fallen apart, come on.” The speaker thinks the fact is obvious and wants you to admit it. It is not a neutral question.",
+  },
+  {
+    id: "kke",
+    name: "っけ",
+    priority: 73,
+    reminder: "っけ — checking a memory you no longer trust.",
+    explanation:
+      "っけ asks the listener, or yourself, to confirm something that should be known. 見直したっけ is “we did revise it, didn’t we?” The doubt is about memory, not about grammar. It often follows た or だ.",
+  },
+  {
+    id: "poi",
+    name: "っぽい",
+    priority: 72,
+    reminder: "っぽい — “has the feel of,” a rough らしい.",
+    explanation:
+      "っぽい adds “-ish” or “looks like” to a noun, verb stem, or even a clause. 雨っぽい is “it feels like rain.” It is more subjective and spoken than らしい. On a person, 子供っぽい is “childish,” a judgment, not a description of age.",
+  },
+  {
+    id: "yagaru",
+    name: "やがる",
+    priority: 70,
+    reminder: "やがる — contempt or irritation toward the doer.",
+    explanation:
+      "やがる sticks to the masu-stem and aims the verb at someone the speaker resents. 逃げやがった is “they had the nerve to run.” The action is the same as the plain verb. The grammar adds “and I am angry at them for it.” It is rough, and it is common in conflict scenes.",
+  },
+  {
+    id: "terarenai",
+    name: "てらんない",
+    priority: 68,
+    reminder: "てらんない — “I can’t be bothered to keep doing this.”",
+    explanation:
+      "てらんない is the crushed form of ていられない. 待ってらんない means “I can’t just keep waiting.” The speaker is refusing to stay in the current state. You will hear it when patience has already run out.",
+  },
+  {
+    id: "zuni",
+    name: "ずにはいられない",
+    priority: 66,
+    reminder: "ずにはいられない — “cannot help but.”",
+    explanation:
+      "ずにはいられない says the feeling or action forces itself out. 言わずにはいられない is “I cannot not say it.” ず is a classical negative on the ない-stem (する → せず). It is literary, and characters use it when they want that weight.",
+  },
 ];
+
+const PATTERN_LEVEL: Record<string, StudyLevel> = {
+  teiru: "N5",
+  tai: "N5",
+  nai: "N5",
+  kudasai: "N5",
+  enders: "N5",
+  kara: "N5",
+  nda: "N4",
+  tara: "N4",
+  temiru: "N4",
+  nakuteii: "N4",
+  volitional: "N4",
+  kedo: "N4",
+  janai: "N4",
+  mashou: "N4",
+  naide: "N4",
+  youni: "N3",
+  hazu: "N3",
+  noni: "N3",
+  tame: "N3",
+  chau: "N3",
+  teoku: "N3",
+  kamo: "N3",
+  darou: "N3",
+  wake: "N2",
+  nimokakawarazu: "N2",
+  zaruoenai: "N2",
+  chigainai: "N2",
+  naikotoniwa: "N2",
+  monono: "N2",
+  nishitemo: "N2",
+  kaneru: "N2",
+  naradeha: "N2",
+  seide: "N2",
+  tamaranai: "N2",
+  kkonai: "N2",
+  contractions: "N2",
+  nakya: "N2",
+  jan: "N2",
+  kke: "N2",
+  poi: "N2",
+  yagaru: "N1",
+  terarenai: "N1",
+  zuni: "N1",
+};
 
 const BY_ID = new Map(PATTERNS.map((pattern) => [pattern.id, pattern]));
 
 export function patternInfo(id: string): PatternInfo | undefined {
   return BY_ID.get(id);
+}
+
+export function patternLevel(id: string): StudyLevel {
+  return PATTERN_LEVEL[id] || "N3";
+}
+
+export function patternInRange(id: string, level: StudyLevel): boolean {
+  return levelRank(patternLevel(id)) <= levelRank(level);
 }
 
 export function allPatterns(): PatternInfo[] {
@@ -295,5 +535,34 @@ export function matchPatternIds(text: string, tokens: Token[]): string[] {
   }
   if (/ましょう/.test(text)) add("mashou");
   if (/ないで(?!いい)/.test(text)) add("naide");
+  if (/わけ(?:では|じゃ)ない|わけがない|わけにはいかない|わけにはいけない|わけだ|わけない/.test(text)) add("wake");
+  if (/ようにする|ようになる|ないように/.test(text)) add("youni");
+  if (/はず/.test(text)) add("hazu");
+  if (/のに/.test(text)) add("noni");
+  if (/ために/.test(text)) add("tame");
+  if (/にもかかわらず/.test(text)) add("nimokakawarazu");
+  if (/ざるを得ない|ざるをえない/.test(text)) add("zaruoenai");
+  if (/に違いない|にちがいない/.test(text)) add("chigainai");
+  if (/ないことには/.test(text)) add("naikotoniwa");
+  if (/ものの/.test(text)) add("monono");
+  if (/にしても/.test(text)) add("nishitemo");
+  if (/かねない|かねる/.test(text)) add("kaneru");
+  if (/ならでは/.test(text)) add("naradeha");
+  if (/せいで|おかげで/.test(text)) add("seide");
+  if (/てしょうがない|て仕方ない|てたまらない|てならない/.test(text)) add("tamaranai");
+  if (/っこない/.test(text)) add("kkonai");
+  if (/じゃん/.test(text)) add("jan");
+  if (/っけ/.test(text)) add("kke");
+  if (/っぽい/.test(text)) add("poi");
+  if (/やがる|やがった|やがって/.test(text)) add("yagaru");
+  if (/てらんない|てられない|ていられない/.test(text)) add("terarenai");
+  if (/ずにはいられない/.test(text)) add("zuni");
+  if (
+    /ちゃっ|ちゃう|じゃう|なきゃ|なくちゃ|じゃん|っけ/.test(text) ||
+    /[きしちにびりみ]と(?:く|いて|いた|こう)/.test(text) ||
+    /[きしちにびりみ]ど(?:く|いて|いた|こう)/.test(text)
+  ) {
+    add("contractions");
+  }
   return ids;
 }

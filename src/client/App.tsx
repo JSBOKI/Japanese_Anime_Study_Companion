@@ -6,6 +6,7 @@ import { SessionContext, type SessionState } from "./session";
 import { HomePage } from "./pages/Home";
 import { KnownPage } from "./pages/Known";
 import { LessonPage } from "./pages/Lesson";
+import { LevelPage } from "./pages/Level";
 import { LoginPage } from "./pages/Login";
 import { NewSeriesPage } from "./pages/NewSeries";
 import { ReviewPage } from "./pages/Review";
@@ -51,6 +52,7 @@ export function App() {
           <Route path="episodes/:id" element={<LessonPage />} />
           <Route path="review" element={<ReviewPage />} />
           <Route path="known" element={<KnownPage />} />
+          <Route path="level" element={<LevelPage />} />
         </Route>
       </Routes>
     </SessionContext.Provider>
