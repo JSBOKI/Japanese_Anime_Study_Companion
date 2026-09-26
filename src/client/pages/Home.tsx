@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, postJson } from "../api";
+import { listOffline } from "../offline";
 import type { SeriesSummary } from "../../shared/types";
 
 export function HomePage() {
   const [series, setSeries] = useState<SeriesSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [installHint, setInstallHint] = useState(false);
+  const [offline] = useState(() => listOffline());
   const navigate = useNavigate();
 
   const load = () => {
@@ -16,6 +19,14 @@ export function HomePage() {
   };
 
   useEffect(load, []);
+
+  useEffect(() => {
+    const ios = /iPhone|iPad/.test(navigator.userAgent);
+    const standalone =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      ("standalone" in navigator && Boolean((navigator as Navigator & { standalone?: boolean }).standalone));
+    if (ios && !standalone && localStorage.getItem("yomu-install-hint") !== "off") setInstallHint(true);
+  }, []);
 
   async function loadSample() {
     setBusy(true);
@@ -43,6 +54,35 @@ export function HomePage() {
           {busy ? "Building the sample…" : "Try the sample scene"}
         </button>
       </div>
+      {installHint ? (
+        <p className="banner">
+          On iPhone, open Share and choose Add to Home Screen. Yomu then opens full screen, and a drill can keep playing with the screen locked.
+          <button
+            className="text-btn"
+            type="button"
+            onClick={() => {
+              localStorage.setItem("yomu-install-hint", "off");
+              setInstallHint(false);
+            }}
+          >
+            Hide
+          </button>
+        </p>
+      ) : null}
+      {offline.length ? (
+        <section className="panel">
+          <h2>On this phone</h2>
+          <p className="hint">Saved for the subway. These lessons and drills open without a signal.</p>
+          <div className="stack">
+            {offline.map((item) => (
+              <Link key={item.id} to={`/episodes/${item.id}`}>
+                {item.seriesTitle} · episode {item.number}
+                {item.title ? ` · ${item.title}` : ""}
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
       {error ? <p className="banner bad">{error}</p> : null}
       {series && series.length === 0 ? (
         <section className="empty">

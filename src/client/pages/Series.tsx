@@ -111,10 +111,9 @@ export function SeriesPage() {
       <section className="panel">
         <h2>Subtitles</h2>
         <p className="hint">One .srt, .ass, or .vtt per episode, or a zip of them. Numbers in the filename (episode 01, E02) are picked up automatically.</p>
-        <label className={`drop ${busy ? "busy" : ""}`}>
+        <label className={`drop file-btn ${busy ? "busy" : ""}`}>
           <input
             type="file"
-            accept=".srt,.ass,.ssa,.vtt,.zip,text/vtt"
             multiple
             disabled={busy}
             onChange={(event) => {
@@ -122,8 +121,9 @@ export function SeriesPage() {
               event.target.value = "";
             }}
           />
-          {busy ? "Building the lesson…" : "Upload subtitle files"}
+          {busy ? "Building the lesson…" : "Choose subtitle files"}
         </label>
+        <p className="hint">On iPhone, pick the file from Files. .srt, .ass, .vtt, and .zip all work, including files the picker does not label.</p>
         <div className="row-actions">
           {series.cardCount > 0 ? (
             <>
@@ -190,12 +190,10 @@ export function SeriesPage() {
                   Lesson
                 </Link>
               ) : null}
-              <label className="btn">
+              <label className="btn file-btn">
                 Upload
                 <input
                   type="file"
-                  accept=".srt,.ass,.ssa,.vtt,.zip"
-                  hidden
                   onChange={(event) => {
                     if (event.target.files) void upload(event.target.files, episode.number);
                     event.target.value = "";

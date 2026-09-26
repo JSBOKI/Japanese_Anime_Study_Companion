@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, postJson } from "../api";
 import { DialogueLine, FuriganaWord } from "../components/Japanese";
+import { attachMediaSession } from "../media";
+import { isOfflineSaved, saveEpisodeOffline } from "../offline";
 import type { EpisodeDetail, VocabItem } from "../../shared/types";
 
 export function LessonPage() {
@@ -12,6 +14,7 @@ export function LessonPage() {
   const [allLines, setAllLines] = useState(false);
   const [playing, setPlaying] = useState<number | null>(null);
   const [known, setKnown] = useState<Set<string>>(new Set());
+  const lineAudio = useRef<HTMLAudioElement>(null);
 
   async function load() {
     const data = await api<EpisodeDetail>(`/api/episodes/${id}`);
@@ -44,18 +47,21 @@ export function LessonPage() {
   }
 
   async function playLine(index: number) {
+    const audio = lineAudio.current;
+    if (!audio || !episode) return;
     setPlaying(index);
+    audio.src = `/api/episodes/${id}/lines/${index}/audio`;
+    attachMediaSession(audio, {
+      title: episode.lesson?.lines.find((line) => line.index === index)?.text || `Line ${index + 1}`,
+      artist: episode.seriesTitle,
+      album: `Episode ${episode.number}`,
+    });
+    audio.onended = () => setPlaying(null);
     try {
-      const res = await fetch(`/api/episodes/${id}/lines/${index}/audio`);
-      if (!res.ok) throw new Error("Could not play that line");
-      const url = URL.createObjectURL(await res.blob());
-      const audio = new Audio(url);
-      audio.onended = () => URL.revokeObjectURL(url);
       await audio.play();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Playback failed");
-    } finally {
       setPlaying(null);
+      setError(err instanceof Error ? err.message : "Playback failed");
     }
   }
 
@@ -235,11 +241,33 @@ export function LessonPage() {
         </p>
         <AudioBlock episode={episode} onRetry={() => postJson(`/api/episodes/${id}/audio`, {}).then(() => load())} />
       </section>
+      <audio ref={lineAudio} className="line-audio" preload="none" />
     </div>
   );
 }
 
 function AudioBlock({ episode, onRetry }: { episode: EpisodeDetail; onRetry: () => void }) {
+  const [saved, setSaved] = useState(() => isOfflineSaved(episode.id));
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  async function saveOffline() {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await saveEpisodeOffline({
+        id: episode.id,
+        number: episode.number,
+        title: episode.title,
+        seriesTitle: episode.seriesTitle,
+      });
+      setSaved(true);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Could not save this episode");
+    } finally {
+      setSaving(false);
+    }
+  }
   if (episode.audioStatus === "pending") {
     return <p className="banner">{episode.audioProgress || "Making the audio…"}</p>;
   }
@@ -262,20 +290,58 @@ function AudioBlock({ episode, onRetry }: { episode: EpisodeDetail; onRetry: () 
   }
   return (
     <div className="players">
-      <div>
-        <h3>Dialogue drill</h3>
-        <audio controls preload="none" src={`/api/episodes/${episode.id}/audio/dialogue`} />
-        <a className="btn" href={`/api/episodes/${episode.id}/audio/dialogue`} download={`episode-${episode.number}-dialogue.mp3`}>
-          Download MP3
-        </a>
-      </div>
-      <div>
-        <h3>Vocabulary drill</h3>
-        <audio controls preload="none" src={`/api/episodes/${episode.id}/audio/vocab`} />
-        <a className="btn" href={`/api/episodes/${episode.id}/audio/vocab`} download={`episode-${episode.number}-vocab.mp3`}>
-          Download MP3
-        </a>
-      </div>
+      <p className="hint">Play stays on the lock screen. Saving a copy keeps the lesson and both drills for the subway.</p>
+      {saveError ? <p className="banner bad">{saveError}</p> : null}
+      <button className="btn" type="button" onClick={saveOffline} disabled={saving || saved}>
+        {saved ? "Saved on this phone" : saving ? "Saving…" : "Save for offline"}
+      </button>
+      <Drill
+        title="Dialogue drill"
+        src={`/api/episodes/${episode.id}/audio/dialogue`}
+        artist={episode.seriesTitle}
+        album={`Episode ${episode.number}`}
+        download={`episode-${episode.number}-dialogue.mp3`}
+      />
+      <Drill
+        title="Vocabulary drill"
+        src={`/api/episodes/${episode.id}/audio/vocab`}
+        artist={episode.seriesTitle}
+        album={`Episode ${episode.number} vocabulary`}
+        download={`episode-${episode.number}-vocab.mp3`}
+      />
+    </div>
+  );
+}
+
+function Drill({
+  title,
+  src,
+  artist,
+  album,
+  download,
+}: {
+  title: string;
+  src: string;
+  artist: string;
+  album: string;
+  download: string;
+}) {
+  const ref = useRef<HTMLAudioElement>(null);
+  return (
+    <div>
+      <h3>{title}</h3>
+      <audio
+        ref={ref}
+        controls
+        preload="metadata"
+        src={src}
+        onPlay={() => {
+          if (ref.current) attachMediaSession(ref.current, { title, artist, album });
+        }}
+      />
+      <a className="btn" href={src} download={download}>
+        Download MP3
+      </a>
     </div>
   );
 }

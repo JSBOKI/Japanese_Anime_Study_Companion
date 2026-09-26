@@ -37,4 +37,7 @@ test("decodes shift-jis and reads zip archives", async () => {
   const files = await filesFromUpload("subs.zip", buffer);
   assert.equal(files.length, 1);
   assert.equal(guessEpisodeNumber(files[0].name), 2);
+  const unnamed = await filesFromUpload("subtitle", Buffer.from(srt));
+  assert.equal(unnamed[0].name, "subtitle.srt");
+  assert.match(unnamed[0].text, /日本語/);
 });

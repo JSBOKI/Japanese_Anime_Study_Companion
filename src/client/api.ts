@@ -1,5 +1,8 @@
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, init);
+  const res = await fetch(path, { credentials: "same-origin", ...init });
+  if (res.status === 401 && path !== "/api/login") {
+    window.dispatchEvent(new Event("yomu-unauthorized"));
+  }
   if (!res.ok) {
     let message = res.statusText || "Request failed";
     try {

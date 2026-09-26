@@ -4,6 +4,7 @@ import path from "node:path";
 import multer from "multer";
 import { fetchAniList, searchAniList } from "./anilist.ts";
 import { queueEpisodeAudio, ensureLineAudio } from "./audio.ts";
+import { appPassword, installAuth } from "./auth.ts";
 import { audioDir, host, jimakuKey, llmName, port, rootDir, sampleDir } from "./config.ts";
 import {
   addKnown,
@@ -142,12 +143,15 @@ async function main() {
   await Promise.all([loadDictionaries(), loadTokenizer()]);
 
   const app = express();
+  app.set("trust proxy", 1);
   app.disable("x-powered-by");
   app.use(express.json({ limit: "2mb" }));
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
   });
+
+  installAuth(app);
 
   app.get("/api/config", (_req, res) => {
     res.json({
@@ -262,9 +266,13 @@ async function main() {
     if (!files.length) throw new HttpError(400, "Choose a subtitle file or a zip.");
     const forced = Number(req.body?.episodeNumber);
     const collected: { name: string; text: string }[] = [];
-    for (const file of files) {
-      const extracted = await filesFromUpload(file.originalname, file.buffer);
-      collected.push(...extracted);
+    try {
+      for (const file of files) {
+        const extracted = await filesFromUpload(file.originalname, file.buffer);
+        collected.push(...extracted);
+      }
+    } catch (error) {
+      throw new HttpError(400, error instanceof Error ? error.message : "Upload failed");
     }
     if (!collected.length) throw new HttpError(400, "No subtitle files were inside that upload.");
     let cursor = nextEpisodeNumber(seriesId);
@@ -441,7 +449,14 @@ async function main() {
 
   if (process.env.NODE_ENV === "production") {
     const clientDir = path.join(rootDir, "dist/client");
-    app.use(express.static(clientDir));
+    app.use(
+      express.static(clientDir, {
+        setHeaders(res, filePath) {
+          if (filePath.endsWith(".webmanifest")) res.setHeader("Content-Type", "application/manifest+json");
+          if (filePath.endsWith(`${path.sep}sw.js`)) res.setHeader("Cache-Control", "no-cache");
+        },
+      }),
+    );
     app.use((req, res, next) => {
       if (req.method !== "GET" || req.path.startsWith("/api")) return next();
       res.sendFile(path.join(clientDir, "index.html"), (error) => {
@@ -471,6 +486,7 @@ async function main() {
     console.log(llm === "none" ? "Lessons: dictionary glosses and built-in grammar (no LLM key)." : `Lessons: ${llm} plus the dictionary.`);
     console.log(`Audio: ${describeTts()}.`);
     console.log(jimakuKey() ? "Jimaku: on." : "Jimaku: off (set JIMAKU_API_KEY to search subtitles).");
+    console.log(appPassword() ? "Access: password required." : "Access: open (set APP_PASSWORD before putting this on the internet).");
   });
 }
 

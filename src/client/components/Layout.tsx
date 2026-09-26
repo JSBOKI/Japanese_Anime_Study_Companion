@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { api } from "../api";
+import { useSession } from "../session";
 import type { Stats } from "../../shared/types";
 
 export function Layout() {
   const [stats, setStats] = useState<Stats | null>(null);
+  const session = useSession();
 
   useEffect(() => {
     const load = () => {
@@ -29,6 +31,11 @@ export function Layout() {
             <small>Read what you watch</small>
           </span>
         </NavLink>
+        {session.required ? (
+          <button className="text-btn sign-out" type="button" onClick={() => void session.signOut()}>
+            Sign out
+          </button>
+        ) : null}
       </header>
       <main className="main">
         <Outlet />

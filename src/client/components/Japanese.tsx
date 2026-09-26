@@ -34,10 +34,13 @@ export function DialogueLine({
         ))}
       </p>
       {token ? (
-        <div className="gloss-pop">
+        <div className="gloss-pop" role="dialog" aria-label="Word meaning">
           <strong lang="ja">{token.lemma}</strong>
           {(token.lemmaReading || token.reading) ? <span lang="ja">{token.lemmaReading || token.reading}</span> : null}
           <em>{token.pos}</em>
+          <button type="button" className="gloss-close" onClick={() => setActive(null)}>
+            Close
+          </button>
           <p>{token.gloss || "No gloss for this piece."}</p>
         </div>
       ) : null}

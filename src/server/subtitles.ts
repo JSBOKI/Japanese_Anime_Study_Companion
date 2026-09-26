@@ -144,8 +144,19 @@ export async function filesFromUpload(filename: string, buffer: Buffer): Promise
     files.sort((a, b) => a.name.localeCompare(b.name, "en"));
     return files;
   }
+  const text = decodeSubtitle(buffer);
   if (!SUB_EXT.test(filename)) {
-    throw new Error("Upload a .srt, .ass, .ssa, .vtt, or .zip of those files.");
+    if (!looksLikeSubtitle(text)) {
+      throw new Error("Upload a .srt, .ass, .ssa, .vtt, or .zip of those files.");
+    }
+    const name = filename.includes(".") ? filename : `${filename || "episode"}.srt`;
+    return [{ name, text }];
   }
-  return [{ name: filename, text: decodeSubtitle(buffer) }];
+  return [{ name: filename, text }];
+}
+
+function looksLikeSubtitle(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("WEBVTT") || trimmed.includes("[Events]")) return true;
+  return /\d{1,2}:\d{2}:\d{2}[,.]\d{2,3}\s*-->/.test(trimmed);
 }
