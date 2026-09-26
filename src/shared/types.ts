@@ -22,6 +22,8 @@ export type SeriesSummary = {
   year: number | null;
   format: string | null;
   sample: boolean;
+  netflixUrl: string | null;
+  netflixSource: "anilist" | "justwatch" | "manual" | "none" | null;
   createdAt: string;
   lessonsReady: number;
   cardCount: number;
@@ -41,6 +43,7 @@ export type EpisodeSummary = {
   audioProgress: string | null;
   audioError: string | null;
   stale: boolean;
+  netflixWatchUrl: string | null;
 };
 
 export type KanjiInfo = {
@@ -161,6 +164,7 @@ export type Lesson = {
 export type EpisodeDetail = EpisodeSummary & {
   seriesTitle: string;
   seriesNative: string | null;
+  netflixUrl: string | null;
   lesson: Lesson | null;
   levelStale?: boolean;
 };
@@ -221,6 +225,14 @@ export type KnownWord = {
   lemma: string;
   reading: string | null;
   createdAt: string;
+};
+
+export type SubtitleFetch = {
+  status: "idle" | "running" | "done" | "error";
+  source: string | null;
+  message: string | null;
+  matched: number;
+  total: number;
 };
 
 export type Stats = {

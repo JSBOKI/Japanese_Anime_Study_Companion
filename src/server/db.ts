@@ -18,6 +18,7 @@ import type { Card } from "ts-fsrs";
 export type EpisodeRecord = EpisodeSummary & {
   seriesTitle: string;
   seriesNative: string | null;
+  netflixUrl: string | null;
   lesson: Lesson | null;
   cuesJson: string | null;
 };
@@ -26,6 +27,12 @@ let database: DatabaseSync | null = null;
 
 function now(): string {
   return new Date().toISOString();
+}
+
+function addColumn(db: DatabaseSync, table: string, column: string, type: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (cols.some((col) => col.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
 
 export function getDb(): DatabaseSync {
@@ -137,7 +144,19 @@ export function getDb(): DatabaseSync {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS subtitle_fetches (
+      series_id INTEGER PRIMARY KEY REFERENCES series(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      source TEXT,
+      message TEXT,
+      matched INTEGER NOT NULL DEFAULT 0,
+      total INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
   `);
+  addColumn(db, "series", "netflix_url", "TEXT");
+  addColumn(db, "series", "netflix_source", "TEXT");
+  addColumn(db, "episodes", "netflix_watch_url", "TEXT");
   db.prepare("UPDATE episodes SET audio_status = 'idle', audio_progress = NULL WHERE audio_status = 'pending'").run();
   database = db;
   return db;
@@ -156,6 +175,8 @@ type SeriesRow = {
   year: number | null;
   format: string | null;
   sample: number;
+  netflix_url: string | null;
+  netflix_source: string | null;
   created_at: string;
   lessons_ready: number;
   card_count: number;
@@ -176,6 +197,10 @@ function mapSeries(row: SeriesRow): SeriesSummary {
     year: row.year,
     format: row.format,
     sample: Boolean(row.sample),
+    netflixUrl: row.netflix_url || null,
+    netflixSource: row.netflix_source === "anilist" || row.netflix_source === "justwatch" || row.netflix_source === "manual" || row.netflix_source === "none"
+      ? row.netflix_source
+      : null,
     createdAt: row.created_at,
     lessonsReady: row.lessons_ready || 0,
     cardCount: row.card_count || 0,
@@ -255,6 +280,18 @@ export function deleteSeries(id: number): void {
   getDb().prepare("DELETE FROM series WHERE id = ?").run(id);
 }
 
+export function setSeriesNetflix(seriesId: number, url: string | null, source: "anilist" | "justwatch" | "manual" | "none"): SeriesSummary {
+  getDb().prepare("UPDATE series SET netflix_url = ?, netflix_source = ? WHERE id = ?").run(url, source, seriesId);
+  const series = getSeries(seriesId);
+  if (!series) throw new Error("Series not found");
+  return series;
+}
+
+export function saveNetflixWatches(seriesId: number, watches: { number: number; url: string }[]): void {
+  const update = getDb().prepare("UPDATE episodes SET netflix_watch_url = ? WHERE series_id = ? AND number = ?");
+  for (const watch of watches) update.run(watch.url, seriesId, watch.number);
+}
+
 type EpisodeRow = {
   id: number;
   series_id: number;
@@ -270,6 +307,7 @@ type EpisodeRow = {
   audio_progress: string | null;
   audio_dialogue_path: string | null;
   audio_vocab_path: string | null;
+  netflix_watch_url: string | null;
   prev_generated: string | null;
   series_title?: string;
   series_native?: string | null;
@@ -295,6 +333,7 @@ function mapEpisode(row: EpisodeRow): EpisodeSummary {
     audioProgress: row.audio_progress,
     audioError: row.audio_error,
     stale,
+    netflixWatchUrl: row.netflix_watch_url || null,
   };
 }
 
@@ -314,11 +353,12 @@ export function getEpisode(id: number): EpisodeRecord | null {
     `SELECT e.*,
        (SELECT MAX(p.lesson_generated_at) FROM episodes p WHERE p.series_id = e.series_id AND p.number < e.number) AS prev_generated,
        s.title AS series_title,
-       s.title_native AS series_native
+       s.title_native AS series_native,
+       s.netflix_url AS series_netflix_url
      FROM episodes e
      JOIN series s ON s.id = e.series_id
      WHERE e.id = ?`,
-  ).get(id) as (EpisodeRow & { series_title: string; series_native: string | null }) | undefined;
+  ).get(id) as (EpisodeRow & { series_title: string; series_native: string | null; series_netflix_url: string | null }) | undefined;
   if (!row) return null;
   let lesson: Lesson | null = null;
   if (row.lesson_json) {
@@ -332,6 +372,7 @@ export function getEpisode(id: number): EpisodeRecord | null {
     ...mapEpisode(row),
     seriesTitle: row.series_title,
     seriesNative: row.series_native,
+    netflixUrl: row.netflix_watch_url || row.series_netflix_url || null,
     lesson,
     cuesJson: null,
   };
@@ -725,6 +766,87 @@ export function nextEpisodeNumber(seriesId: number): number {
     n: number;
   };
   return row.n + 1;
+}
+
+export type EpisodeSubtitleState = { number: number; hasSubtitle: boolean; hasLesson: boolean };
+
+export function listEpisodeSubtitleState(seriesId: number): EpisodeSubtitleState[] {
+  const rows = getDb().prepare("SELECT number, subtitle_text, lesson_json FROM episodes WHERE series_id = ? ORDER BY number").all(seriesId) as {
+    number: number;
+    subtitle_text: string | null;
+    lesson_json: string | null;
+  }[];
+  return rows.map((row) => ({
+    number: row.number,
+    hasSubtitle: Boolean(row.subtitle_text),
+    hasLesson: Boolean(row.lesson_json),
+  }));
+}
+
+export function saveSubtitleText(input: { seriesId: number; number: number; filename: string; text: string }): boolean {
+  const db = getDb();
+  const existing = db.prepare("SELECT id, subtitle_text FROM episodes WHERE series_id = ? AND number = ?").get(input.seriesId, input.number) as
+    | { id: number; subtitle_text: string | null }
+    | undefined;
+  if (existing?.subtitle_text) return false;
+  const filename = input.filename.split("/").pop() || input.filename;
+  if (existing) {
+    db.prepare("UPDATE episodes SET subtitle_name = ?, subtitle_text = ? WHERE id = ?").run(filename, input.text, existing.id);
+    return true;
+  }
+  db.prepare(
+    "INSERT INTO episodes (series_id, number, title, subtitle_name, subtitle_text, cue_count, new_word_count, audio_status, created_at) VALUES (?, ?, ?, ?, ?, 0, 0, 'idle', ?)",
+  ).run(input.seriesId, input.number, `Episode ${input.number}`, filename, input.text, now());
+  return true;
+}
+
+export function getSubtitleByNumber(seriesId: number, number: number): { filename: string; text: string; hasLesson: boolean } | null {
+  const row = getDb().prepare(
+    "SELECT subtitle_name, subtitle_text, lesson_json FROM episodes WHERE series_id = ? AND number = ?",
+  ).get(seriesId, number) as { subtitle_name: string | null; subtitle_text: string | null; lesson_json: string | null } | undefined;
+  if (!row?.subtitle_text) return null;
+  return { filename: row.subtitle_name || "episode.srt", text: row.subtitle_text, hasLesson: Boolean(row.lesson_json) };
+}
+
+export type SubtitleFetchState = {
+  status: "idle" | "running" | "done" | "error";
+  source: string | null;
+  message: string | null;
+  matched: number;
+  total: number;
+};
+
+export function listRunningSubtitleFetches(): number[] {
+  const rows = getDb().prepare("SELECT series_id FROM subtitle_fetches WHERE status = 'running'").all() as { series_id: number }[];
+  return rows.map((row) => row.series_id);
+}
+
+export function getSubtitleFetch(seriesId: number): SubtitleFetchState {
+  const row = getDb().prepare("SELECT status, source, message, matched, total FROM subtitle_fetches WHERE series_id = ?").get(seriesId) as
+    | { status: string; source: string | null; message: string | null; matched: number; total: number }
+    | undefined;
+  if (!row) return { status: "idle", source: null, message: null, matched: 0, total: 0 };
+  const status = row.status === "running" || row.status === "done" || row.status === "error" ? row.status : "idle";
+  return { status, source: row.source, message: row.message, matched: row.matched, total: row.total };
+}
+
+export function setSubtitleFetch(seriesId: number, patch: Partial<SubtitleFetchState> & { status: SubtitleFetchState["status"] }): SubtitleFetchState {
+  const current = getSubtitleFetch(seriesId);
+  const next: SubtitleFetchState = {
+    status: patch.status,
+    source: patch.source === undefined ? current.source : patch.source,
+    message: patch.message === undefined ? current.message : patch.message,
+    matched: patch.matched === undefined ? current.matched : patch.matched,
+    total: patch.total === undefined ? current.total : patch.total,
+  };
+  getDb().prepare(
+    `INSERT INTO subtitle_fetches (series_id, status, source, message, matched, total, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(series_id) DO UPDATE SET
+       status = excluded.status, source = excluded.source, message = excluded.message,
+       matched = excluded.matched, total = excluded.total, updated_at = excluded.updated_at`,
+  ).run(seriesId, next.status, next.source, next.message, next.matched, next.total, now());
+  return next;
 }
 
 export function episodeHasSubtitle(seriesId: number, number: number): boolean {
