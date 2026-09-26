@@ -1,0 +1,643 @@
+import fs from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { dbPath, dataDir } from "./config.ts";
+import type {
+  EpisodeSummary,
+  KnownWord,
+  Lesson,
+  SeriesSummary,
+  Stats,
+  VocabItem,
+} from "../shared/types.ts";
+import { emptyStoredCard, fromStored, toStored, type StoredCard } from "./srs.ts";
+import type { Card } from "ts-fsrs";
+
+export type EpisodeRecord = EpisodeSummary & {
+  seriesTitle: string;
+  seriesNative: string | null;
+  lesson: Lesson | null;
+  cuesJson: string | null;
+};
+
+let database: DatabaseSync | null = null;
+
+function now(): string {
+  return new Date().toISOString();
+}
+
+export function getDb(): DatabaseSync {
+  if (database) return database;
+  fs.mkdirSync(dataDir, { recursive: true });
+  const db = new DatabaseSync(dbPath);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA foreign_keys = ON");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS series (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      title_native TEXT,
+      title_romaji TEXT,
+      cover_url TEXT,
+      synopsis TEXT,
+      episode_count INTEGER,
+      media_type TEXT NOT NULL DEFAULT 'anime',
+      anilist_id INTEGER,
+      year INTEGER,
+      format TEXT,
+      sample INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS episodes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      series_id INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,
+      number INTEGER NOT NULL,
+      title TEXT,
+      subtitle_name TEXT,
+      subtitle_text TEXT,
+      cues_json TEXT,
+      lesson_json TEXT,
+      lesson_generated_at TEXT,
+      cue_count INTEGER NOT NULL DEFAULT 0,
+      new_word_count INTEGER NOT NULL DEFAULT 0,
+      audio_status TEXT NOT NULL DEFAULT 'idle',
+      audio_error TEXT,
+      audio_progress TEXT,
+      audio_dialogue_path TEXT,
+      audio_vocab_path TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE(series_id, number)
+    );
+    CREATE TABLE IF NOT EXISTS known_words (
+      lemma TEXT PRIMARY KEY,
+      reading TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS cards (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+      series_id INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,
+      lemma TEXT NOT NULL,
+      reading TEXT NOT NULL,
+      meaning TEXT NOT NULL,
+      pos TEXT,
+      jlpt TEXT,
+      example_jp TEXT,
+      example_en TEXT,
+      due TEXT NOT NULL,
+      stability REAL NOT NULL,
+      difficulty REAL NOT NULL,
+      elapsed_days REAL NOT NULL,
+      scheduled_days REAL NOT NULL,
+      learning_steps INTEGER NOT NULL,
+      reps INTEGER NOT NULL,
+      lapses INTEGER NOT NULL,
+      state INTEGER NOT NULL,
+      last_review TEXT,
+      UNIQUE(episode_id, lemma)
+    );
+    CREATE TABLE IF NOT EXISTS taught_items (
+      series_id INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,
+      episode_number INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      item_key TEXT NOT NULL,
+      PRIMARY KEY (series_id, episode_number, kind, item_key)
+    );
+    CREATE INDEX IF NOT EXISTS cards_due ON cards(due);
+  `);
+  db.prepare("UPDATE episodes SET audio_status = 'idle', audio_progress = NULL WHERE audio_status = 'pending'").run();
+  database = db;
+  return db;
+}
+
+type SeriesRow = {
+  id: number;
+  title: string;
+  title_native: string | null;
+  title_romaji: string | null;
+  cover_url: string | null;
+  synopsis: string | null;
+  episode_count: number | null;
+  media_type: string;
+  anilist_id: number | null;
+  year: number | null;
+  format: string | null;
+  sample: number;
+  created_at: string;
+  lessons_ready: number;
+  card_count: number;
+  due_count: number;
+};
+
+function mapSeries(row: SeriesRow): SeriesSummary {
+  return {
+    id: row.id,
+    title: row.title,
+    titleNative: row.title_native,
+    titleRomaji: row.title_romaji,
+    coverUrl: row.cover_url,
+    synopsis: row.synopsis,
+    episodeCount: row.episode_count,
+    mediaType: row.media_type === "drama" ? "drama" : "anime",
+    anilistId: row.anilist_id,
+    year: row.year,
+    format: row.format,
+    sample: Boolean(row.sample),
+    createdAt: row.created_at,
+    lessonsReady: row.lessons_ready || 0,
+    cardCount: row.card_count || 0,
+    dueCount: row.due_count || 0,
+  };
+}
+
+const seriesSelect = `
+  SELECT s.*,
+    (SELECT COUNT(*) FROM episodes e WHERE e.series_id = s.id AND e.lesson_json IS NOT NULL) AS lessons_ready,
+    (SELECT COUNT(*) FROM cards c WHERE c.series_id = s.id) AS card_count,
+    (SELECT COUNT(*) FROM cards c WHERE c.series_id = s.id AND c.due <= ?) AS due_count
+  FROM series s
+`;
+
+export function listSeries(): SeriesSummary[] {
+  const rows = getDb().prepare(`${seriesSelect} ORDER BY s.created_at DESC`).all(now()) as SeriesRow[];
+  return rows.map(mapSeries);
+}
+
+export function getSeries(id: number): SeriesSummary | null {
+  const row = getDb().prepare(`${seriesSelect} WHERE s.id = ?`).get(now(), id) as SeriesRow | undefined;
+  return row ? mapSeries(row) : null;
+}
+
+export function findSampleSeries(): SeriesSummary | null {
+  const row = getDb().prepare(`${seriesSelect} WHERE s.sample = 1 ORDER BY s.id LIMIT 1`).get(now()) as SeriesRow | undefined;
+  return row ? mapSeries(row) : null;
+}
+
+export function createSeries(input: {
+  title: string;
+  titleNative?: string | null;
+  titleRomaji?: string | null;
+  coverUrl?: string | null;
+  synopsis?: string | null;
+  episodeCount?: number | null;
+  mediaType: "anime" | "drama";
+  anilistId?: number | null;
+  year?: number | null;
+  format?: string | null;
+  sample?: boolean;
+}): SeriesSummary {
+  const db = getDb();
+  const created = now();
+  const info = db.prepare(
+    `INSERT INTO series (title, title_native, title_romaji, cover_url, synopsis, episode_count, media_type, anilist_id, year, format, sample, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    input.title,
+    input.titleNative || null,
+    input.titleRomaji || null,
+    input.coverUrl || null,
+    input.synopsis || null,
+    input.episodeCount || null,
+    input.mediaType,
+    input.anilistId || null,
+    input.year || null,
+    input.format || null,
+    input.sample ? 1 : 0,
+    created,
+  );
+  const id = Number(info.lastInsertRowid);
+  const count = input.episodeCount || 0;
+  const insert = db.prepare(
+    `INSERT INTO episodes (series_id, number, title, created_at, audio_status) VALUES (?, ?, ?, ?, 'idle')`,
+  );
+  for (let number = 1; number <= count; number++) {
+    insert.run(id, number, `Episode ${number}`, created);
+  }
+  const series = getSeries(id);
+  if (!series) throw new Error("Could not create the series");
+  return series;
+}
+
+export function deleteSeries(id: number): void {
+  getDb().prepare("DELETE FROM series WHERE id = ?").run(id);
+}
+
+type EpisodeRow = {
+  id: number;
+  series_id: number;
+  number: number;
+  title: string | null;
+  subtitle_name: string | null;
+  lesson_json: string | null;
+  lesson_generated_at: string | null;
+  cue_count: number;
+  new_word_count: number;
+  audio_status: string;
+  audio_error: string | null;
+  audio_progress: string | null;
+  audio_dialogue_path: string | null;
+  audio_vocab_path: string | null;
+  prev_generated: string | null;
+  series_title?: string;
+  series_native?: string | null;
+};
+
+function mapEpisode(row: EpisodeRow): EpisodeSummary {
+  const stale = Boolean(
+    row.lesson_generated_at && row.prev_generated && row.prev_generated > row.lesson_generated_at,
+  );
+  const status = row.audio_status === "pending" || row.audio_status === "ready" || row.audio_status === "error"
+    ? row.audio_status
+    : "idle";
+  return {
+    id: row.id,
+    seriesId: row.series_id,
+    number: row.number,
+    title: row.title,
+    subtitleName: row.subtitle_name,
+    hasLesson: Boolean(row.lesson_json),
+    cueCount: row.cue_count || 0,
+    newWords: row.new_word_count || 0,
+    audioStatus: status,
+    audioProgress: row.audio_progress,
+    audioError: row.audio_error,
+    stale,
+  };
+}
+
+const episodeSelect = `
+  SELECT e.*,
+    (SELECT MAX(p.lesson_generated_at) FROM episodes p WHERE p.series_id = e.series_id AND p.number < e.number) AS prev_generated
+  FROM episodes e
+`;
+
+export function listEpisodes(seriesId: number): EpisodeSummary[] {
+  const rows = getDb().prepare(`${episodeSelect} WHERE e.series_id = ? ORDER BY e.number`).all(seriesId) as EpisodeRow[];
+  return rows.map(mapEpisode);
+}
+
+export function getEpisode(id: number): EpisodeRecord | null {
+  const row = getDb().prepare(
+    `SELECT e.*,
+       (SELECT MAX(p.lesson_generated_at) FROM episodes p WHERE p.series_id = e.series_id AND p.number < e.number) AS prev_generated,
+       s.title AS series_title,
+       s.title_native AS series_native
+     FROM episodes e
+     JOIN series s ON s.id = e.series_id
+     WHERE e.id = ?`,
+  ).get(id) as (EpisodeRow & { series_title: string; series_native: string | null }) | undefined;
+  if (!row) return null;
+  let lesson: Lesson | null = null;
+  if (row.lesson_json) {
+    try {
+      lesson = JSON.parse(row.lesson_json) as Lesson;
+    } catch {
+      lesson = null;
+    }
+  }
+  return {
+    ...mapEpisode(row),
+    seriesTitle: row.series_title,
+    seriesNative: row.series_native,
+    lesson,
+    cuesJson: null,
+  };
+}
+
+export function saveLesson(input: {
+  seriesId: number;
+  number: number;
+  title: string | null;
+  filename: string;
+  subtitleText: string;
+  cueCount: number;
+  lesson: Lesson;
+}): number {
+  const db = getDb();
+  const existing = db.prepare("SELECT id FROM episodes WHERE series_id = ? AND number = ?").get(input.seriesId, input.number) as
+    | { id: number }
+    | undefined;
+  const lessonJson = JSON.stringify(input.lesson);
+  const generated = input.lesson.generatedAt;
+  const words = input.lesson.vocabulary.length;
+  if (existing) {
+    db.prepare(
+      `UPDATE episodes
+       SET title = COALESCE(?, title), subtitle_name = ?, subtitle_text = ?, lesson_json = ?, lesson_generated_at = ?,
+           cue_count = ?, new_word_count = ?, audio_status = 'idle', audio_error = NULL, audio_progress = NULL,
+           audio_dialogue_path = NULL, audio_vocab_path = NULL
+       WHERE id = ?`,
+    ).run(input.title, input.filename, input.subtitleText, lessonJson, generated, input.cueCount, words, existing.id);
+    return existing.id;
+  }
+  const info = db.prepare(
+    `INSERT INTO episodes (
+      series_id, number, title, subtitle_name, subtitle_text, lesson_json, lesson_generated_at,
+      cue_count, new_word_count, audio_status, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', ?)`,
+  ).run(
+    input.seriesId,
+    input.number,
+    input.title || `Episode ${input.number}`,
+    input.filename,
+    input.subtitleText,
+    lessonJson,
+    generated,
+    input.cueCount,
+    words,
+    now(),
+  );
+  const series = db.prepare("SELECT episode_count FROM series WHERE id = ?").get(input.seriesId) as { episode_count: number | null };
+  if (!series.episode_count || series.episode_count < input.number) {
+    db.prepare("UPDATE series SET episode_count = ? WHERE id = ?").run(input.number, input.seriesId);
+  }
+  return Number(info.lastInsertRowid);
+}
+
+export function setAudioState(
+  episodeId: number,
+  state: {
+    status: "idle" | "pending" | "ready" | "error";
+    error: string | null;
+    progress: string | null;
+    dialoguePath?: string | null;
+    vocabPath?: string | null;
+  },
+): void {
+  getDb().prepare(
+    `UPDATE episodes
+     SET audio_status = ?, audio_error = ?, audio_progress = ?,
+         audio_dialogue_path = COALESCE(?, audio_dialogue_path),
+         audio_vocab_path = COALESCE(?, audio_vocab_path)
+     WHERE id = ?`,
+  ).run(state.status, state.error, state.progress, state.dialoguePath ?? null, state.vocabPath ?? null, episodeId);
+}
+
+export function audioPaths(episodeId: number): { dialogue: string | null; vocab: string | null } {
+  const row = getDb().prepare("SELECT audio_dialogue_path, audio_vocab_path FROM episodes WHERE id = ?").get(episodeId) as
+    | { audio_dialogue_path: string | null; audio_vocab_path: string | null }
+    | undefined;
+  return { dialogue: row?.audio_dialogue_path || null, vocab: row?.audio_vocab_path || null };
+}
+
+export function knownLemmas(): Set<string> {
+  const rows = getDb().prepare("SELECT lemma FROM known_words").all() as { lemma: string }[];
+  return new Set(rows.map((row) => row.lemma));
+}
+
+export function listKnown(): KnownWord[] {
+  const rows = getDb().prepare("SELECT lemma, reading, created_at FROM known_words ORDER BY created_at DESC").all() as {
+    lemma: string;
+    reading: string | null;
+    created_at: string;
+  }[];
+  return rows.map((row) => ({ lemma: row.lemma, reading: row.reading, createdAt: row.created_at }));
+}
+
+export function addKnown(lemma: string, reading: string | null): void {
+  const db = getDb();
+  db.prepare("INSERT INTO known_words (lemma, reading, created_at) VALUES (?, ?, ?) ON CONFLICT(lemma) DO UPDATE SET reading = excluded.reading").run(
+    lemma,
+    reading,
+    now(),
+  );
+  db.prepare("DELETE FROM cards WHERE lemma = ? AND reps = 0").run(lemma);
+}
+
+export function removeKnown(lemma: string): void {
+  getDb().prepare("DELETE FROM known_words WHERE lemma = ?").run(lemma);
+}
+
+export function taughtSets(seriesId: number, beforeEpisode: number): { vocab: Set<string>; grammar: Set<string> } {
+  const rows = getDb().prepare(
+    "SELECT kind, item_key FROM taught_items WHERE series_id = ? AND episode_number < ?",
+  ).all(seriesId, beforeEpisode) as { kind: string; item_key: string }[];
+  const vocab = new Set<string>();
+  const grammar = new Set<string>();
+  for (const row of rows) {
+    if (row.kind === "grammar") grammar.add(row.item_key);
+    else vocab.add(row.item_key);
+  }
+  return { vocab, grammar };
+}
+
+export function replaceTaught(seriesId: number, episodeNumber: number, vocab: string[], grammar: string[]): void {
+  const db = getDb();
+  db.exec("BEGIN");
+  try {
+    db.prepare("DELETE FROM taught_items WHERE series_id = ? AND episode_number = ?").run(seriesId, episodeNumber);
+    const insert = db.prepare(
+      "INSERT INTO taught_items (series_id, episode_number, kind, item_key) VALUES (?, ?, ?, ?)",
+    );
+    for (const key of vocab) insert.run(seriesId, episodeNumber, "vocab", key);
+    for (const key of grammar) insert.run(seriesId, episodeNumber, "grammar", key);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function syncCards(episodeId: number, seriesId: number, vocab: VocabItem[]): void {
+  const db = getDb();
+  const fresh = emptyStoredCard();
+  const statement = db.prepare(
+    `INSERT INTO cards (
+      episode_id, series_id, lemma, reading, meaning, pos, jlpt, example_jp, example_en,
+      due, stability, difficulty, elapsed_days, scheduled_days, learning_steps, reps, lapses, state, last_review
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(episode_id, lemma) DO UPDATE SET
+      reading = excluded.reading,
+      meaning = excluded.meaning,
+      pos = excluded.pos,
+      jlpt = excluded.jlpt,
+      example_jp = excluded.example_jp,
+      example_en = excluded.example_en`,
+  );
+  for (const item of vocab) {
+    const meaning = item.glosses.join("; ") || "No common-dictionary gloss yet";
+    statement.run(
+      episodeId,
+      seriesId,
+      item.lemma,
+      item.reading,
+      meaning,
+      item.pos,
+      item.jlpt,
+      item.example,
+      item.exampleEn,
+      fresh.due,
+      fresh.stability,
+      fresh.difficulty,
+      fresh.elapsed_days,
+      fresh.scheduled_days,
+      fresh.learning_steps,
+      fresh.reps,
+      fresh.lapses,
+      fresh.state,
+      fresh.last_review,
+    );
+  }
+}
+
+type CardRow = StoredCard & {
+  id: number;
+  episode_id: number;
+  series_id: number;
+  lemma: string;
+  reading: string;
+  meaning: string;
+  pos: string | null;
+  jlpt: string | null;
+  example_jp: string | null;
+  example_en: string | null;
+  series_title: string;
+  episode_number: number;
+};
+
+export function listDueCards(seriesId: number | null, limit: number): CardRow[] {
+  const params: (string | number)[] = [now()];
+  let filter = "";
+  if (seriesId) {
+    filter = "AND c.series_id = ?";
+    params.push(seriesId);
+  }
+  params.push(limit);
+  return getDb().prepare(
+    `SELECT c.*, s.title AS series_title, e.number AS episode_number
+     FROM cards c
+     JOIN series s ON s.id = c.series_id
+     JOIN episodes e ON e.id = c.episode_id
+     WHERE c.due <= ? ${filter}
+     ORDER BY c.due ASC
+     LIMIT ?`,
+  ).all(...params) as CardRow[];
+}
+
+export function cardCounts(seriesId: number | null): { due: number; total: number; nextDue: string | null } {
+  const db = getDb();
+  const total = seriesId
+    ? (db.prepare("SELECT COUNT(*) AS n FROM cards WHERE series_id = ?").get(seriesId) as { n: number }).n
+    : (db.prepare("SELECT COUNT(*) AS n FROM cards").get() as { n: number }).n;
+  const due = seriesId
+    ? (db.prepare("SELECT COUNT(*) AS n FROM cards WHERE series_id = ? AND due <= ?").get(seriesId, now()) as { n: number }).n
+    : (db.prepare("SELECT COUNT(*) AS n FROM cards WHERE due <= ?").get(now()) as { n: number }).n;
+  const next = seriesId
+    ? (db.prepare("SELECT MIN(due) AS due FROM cards WHERE series_id = ? AND due > ?").get(seriesId, now()) as { due: string | null })
+    : (db.prepare("SELECT MIN(due) AS due FROM cards WHERE due > ?").get(now()) as { due: string | null });
+  return { due, total, nextDue: next.due };
+}
+
+export function getCardRow(id: number): CardRow | null {
+  const row = getDb().prepare(
+    `SELECT c.*, s.title AS series_title, e.number AS episode_number
+     FROM cards c JOIN series s ON s.id = c.series_id JOIN episodes e ON e.id = c.episode_id
+     WHERE c.id = ?`,
+  ).get(id) as CardRow | undefined;
+  return row || null;
+}
+
+export function saveCard(id: number, card: Card): void {
+  const stored = toStored(card);
+  getDb().prepare(
+    `UPDATE cards SET due=?, stability=?, difficulty=?, elapsed_days=?, scheduled_days=?, learning_steps=?, reps=?, lapses=?, state=?, last_review=?
+     WHERE id = ?`,
+  ).run(
+    stored.due,
+    stored.stability,
+    stored.difficulty,
+    stored.elapsed_days,
+    stored.scheduled_days,
+    stored.learning_steps,
+    stored.reps,
+    stored.lapses,
+    stored.state,
+    stored.last_review,
+    id,
+  );
+}
+
+export function storedFromRow(row: CardRow): Card {
+  return fromStored(row);
+}
+
+export type ExportCard = {
+  lemma: string;
+  reading: string;
+  meaning: string;
+  pos: string | null;
+  jlpt: string | null;
+  exampleJp: string | null;
+  exampleEn: string | null;
+  seriesTitle: string;
+  episodeNumber: number;
+};
+
+export function cardsForExport(filter: { seriesId?: number; episodeId?: number }): ExportCard[] {
+  const clauses: string[] = [];
+  const params: number[] = [];
+  if (filter.seriesId) {
+    clauses.push("c.series_id = ?");
+    params.push(filter.seriesId);
+  }
+  if (filter.episodeId) {
+    clauses.push("c.episode_id = ?");
+    params.push(filter.episodeId);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const rows = getDb().prepare(
+    `SELECT c.*, s.title AS series_title, e.number AS episode_number
+     FROM cards c JOIN series s ON s.id = c.series_id JOIN episodes e ON e.id = c.episode_id
+     ${where}
+     ORDER BY e.number, c.lemma`,
+  ).all(...params) as CardRow[];
+  return rows.map((row) => ({
+    lemma: row.lemma,
+    reading: row.reading,
+    meaning: row.meaning,
+    pos: row.pos,
+    jlpt: row.jlpt,
+    exampleJp: row.example_jp,
+    exampleEn: row.example_en,
+    seriesTitle: row.series_title,
+    episodeNumber: row.episode_number,
+  }));
+}
+
+export function stats(): Stats {
+  const db = getDb();
+  return {
+    dueCount: (db.prepare("SELECT COUNT(*) AS n FROM cards WHERE due <= ?").get(now()) as { n: number }).n,
+    cardCount: (db.prepare("SELECT COUNT(*) AS n FROM cards").get() as { n: number }).n,
+    knownCount: (db.prepare("SELECT COUNT(*) AS n FROM known_words").get() as { n: number }).n,
+    seriesCount: (db.prepare("SELECT COUNT(*) AS n FROM series").get() as { n: number }).n,
+  };
+}
+
+export function getSubtitle(episodeId: number): { seriesId: number; number: number; filename: string; text: string } | null {
+  const row = getDb().prepare(
+    "SELECT series_id, number, subtitle_name, subtitle_text FROM episodes WHERE id = ?",
+  ).get(episodeId) as
+    | { series_id: number; number: number; subtitle_name: string | null; subtitle_text: string | null }
+    | undefined;
+  if (!row?.subtitle_text) return null;
+  return {
+    seriesId: row.series_id,
+    number: row.number,
+    filename: row.subtitle_name || "episode.srt",
+    text: row.subtitle_text,
+  };
+}
+
+export function nextEpisodeNumber(seriesId: number): number {
+  const row = getDb().prepare("SELECT COALESCE(MAX(number), 0) AS n FROM episodes WHERE series_id = ?").get(seriesId) as {
+    n: number;
+  };
+  return row.n + 1;
+}
+
+export function episodeHasSubtitle(seriesId: number, number: number): boolean {
+  const row = getDb().prepare("SELECT subtitle_text FROM episodes WHERE series_id = ? AND number = ?").get(seriesId, number) as
+    | { subtitle_text: string | null }
+    | undefined;
+  return Boolean(row?.subtitle_text);
+}
