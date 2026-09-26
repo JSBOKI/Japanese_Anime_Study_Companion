@@ -73,7 +73,8 @@ The service worker is registered in the production build (`npm run build`, or th
 | Dialogue and vocabulary MP3s, and per-line playback | Yes. Microsoft Edge neural voices, no key. Needs network at playback-generation time, and `ffmpeg`. |
 | Daily NHK news, Japanese reading, and Japanese audio | Yes. The fetch and the first listen need network. |
 | English news text | A matching NHK World-Japan article or its public summary, clearly labeled. A translation of the Japanese article needs an LLM key. If neither exists, the page says English is unavailable. |
-| Jimaku subtitle search | No. Needs `JIMAKU_API_KEY`. |
+| Automatic Japanese subtitles | Yes. Kitsunekko, no key. Jimaku is added when `JIMAKU_API_KEY` is set. |
+| Manual Jimaku search | No. Needs `JIMAKU_API_KEY`. |
 | Password gate | Off until `APP_PASSWORD` is set. |
 
 ## Optional environment variables
@@ -99,7 +100,7 @@ Copy `.env.example` to `.env`.
 | `OPENAI_TTS_VOICE` | Default `nova`. |
 | `VOICEVOX_URL` | Default `http://127.0.0.1:50021`. |
 | `VOICEVOX_SPEAKER` | Default `2` (四国めたん on a normal VOICEVOX install). English lines still use Edge. |
-| `JIMAKU_API_KEY` | Personal key from [jimaku.cc](https://jimaku.cc). Sent as the `Authorization` header. |
+| `JIMAKU_API_KEY` | Optional. Personal key from [jimaku.cc](https://jimaku.cc), sent as the `Authorization` header. Automatic fetch works without it. |
 | `NEWS_FETCH_HOUR` | Optional. Hour in Asia/Tokyo for the daily news fetch. Default `6`. Invalid values use 6. |
 | `NEWS_RSS_URL` | Optional. Overrides the NHK main RSS URL. When the URL contains `cat0.xml`, category feeds are derived from it. Unset uses the public NHK feeds. |
 
@@ -131,7 +132,7 @@ The process needs about 1 GB of RAM after the dictionaries load. A 512 MB instan
 
 Set `APP_PASSWORD` to something long before the URL is public. Without it, anyone who can open the site can read and change the library.
 
-There is no bundled copyrighted subtitle. Users supply their own files, or fetch them from Jimaku with their own key.
+There is no bundled copyrighted subtitle. On a series page, **Get subtitles automatically** downloads a Japanese set for that show: Jimaku when `JIMAKU_API_KEY` is set (matched by AniList id), and [Kitsunekko’s Japanese subtitle directory](https://kitsunekko.net/dirlist.php?dir=subtitles/japanese/) either way. A zip is unpacked in the app. Rar archives are skipped. A `.7z` pack is used only when the `7z` command is installed and no better zip is available. English and Chinese files are skipped, TV episode numbers are preferred, and one release group is kept when several are listed. Episodes that already have a subtitle are skipped. Lessons are built one episode at a time, in episode order, and the page shows how many are ready. Dialogue audio is still made when a lesson is opened, so a long series does not queue hundreds of speech jobs. You can still upload your own `.srt`, `.ass`, `.vtt`, or zip.
 
 Dictionaries are downloaded while the Docker image builds and copied onto the data volume the first time the container starts. The volume must keep the SQLite file, generated MP3s, and those dictionaries across restarts.
 

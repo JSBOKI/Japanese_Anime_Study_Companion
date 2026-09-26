@@ -223,6 +223,14 @@ export type KnownWord = {
   createdAt: string;
 };
 
+export type SubtitleFetch = {
+  status: "idle" | "running" | "done" | "error";
+  source: string | null;
+  message: string | null;
+  matched: number;
+  total: number;
+};
+
 export type Stats = {
   dueCount: number;
   cardCount: number;

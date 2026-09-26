@@ -137,6 +137,15 @@ export function getDb(): DatabaseSync {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS subtitle_fetches (
+      series_id INTEGER PRIMARY KEY REFERENCES series(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      source TEXT,
+      message TEXT,
+      matched INTEGER NOT NULL DEFAULT 0,
+      total INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
   `);
   db.prepare("UPDATE episodes SET audio_status = 'idle', audio_progress = NULL WHERE audio_status = 'pending'").run();
   database = db;
@@ -725,6 +734,87 @@ export function nextEpisodeNumber(seriesId: number): number {
     n: number;
   };
   return row.n + 1;
+}
+
+export type EpisodeSubtitleState = { number: number; hasSubtitle: boolean; hasLesson: boolean };
+
+export function listEpisodeSubtitleState(seriesId: number): EpisodeSubtitleState[] {
+  const rows = getDb().prepare("SELECT number, subtitle_text, lesson_json FROM episodes WHERE series_id = ? ORDER BY number").all(seriesId) as {
+    number: number;
+    subtitle_text: string | null;
+    lesson_json: string | null;
+  }[];
+  return rows.map((row) => ({
+    number: row.number,
+    hasSubtitle: Boolean(row.subtitle_text),
+    hasLesson: Boolean(row.lesson_json),
+  }));
+}
+
+export function saveSubtitleText(input: { seriesId: number; number: number; filename: string; text: string }): boolean {
+  const db = getDb();
+  const existing = db.prepare("SELECT id, subtitle_text FROM episodes WHERE series_id = ? AND number = ?").get(input.seriesId, input.number) as
+    | { id: number; subtitle_text: string | null }
+    | undefined;
+  if (existing?.subtitle_text) return false;
+  const filename = input.filename.split("/").pop() || input.filename;
+  if (existing) {
+    db.prepare("UPDATE episodes SET subtitle_name = ?, subtitle_text = ? WHERE id = ?").run(filename, input.text, existing.id);
+    return true;
+  }
+  db.prepare(
+    "INSERT INTO episodes (series_id, number, title, subtitle_name, subtitle_text, cue_count, new_word_count, audio_status, created_at) VALUES (?, ?, ?, ?, ?, 0, 0, 'idle', ?)",
+  ).run(input.seriesId, input.number, `Episode ${input.number}`, filename, input.text, now());
+  return true;
+}
+
+export function getSubtitleByNumber(seriesId: number, number: number): { filename: string; text: string; hasLesson: boolean } | null {
+  const row = getDb().prepare(
+    "SELECT subtitle_name, subtitle_text, lesson_json FROM episodes WHERE series_id = ? AND number = ?",
+  ).get(seriesId, number) as { subtitle_name: string | null; subtitle_text: string | null; lesson_json: string | null } | undefined;
+  if (!row?.subtitle_text) return null;
+  return { filename: row.subtitle_name || "episode.srt", text: row.subtitle_text, hasLesson: Boolean(row.lesson_json) };
+}
+
+export type SubtitleFetchState = {
+  status: "idle" | "running" | "done" | "error";
+  source: string | null;
+  message: string | null;
+  matched: number;
+  total: number;
+};
+
+export function listRunningSubtitleFetches(): number[] {
+  const rows = getDb().prepare("SELECT series_id FROM subtitle_fetches WHERE status = 'running'").all() as { series_id: number }[];
+  return rows.map((row) => row.series_id);
+}
+
+export function getSubtitleFetch(seriesId: number): SubtitleFetchState {
+  const row = getDb().prepare("SELECT status, source, message, matched, total FROM subtitle_fetches WHERE series_id = ?").get(seriesId) as
+    | { status: string; source: string | null; message: string | null; matched: number; total: number }
+    | undefined;
+  if (!row) return { status: "idle", source: null, message: null, matched: 0, total: 0 };
+  const status = row.status === "running" || row.status === "done" || row.status === "error" ? row.status : "idle";
+  return { status, source: row.source, message: row.message, matched: row.matched, total: row.total };
+}
+
+export function setSubtitleFetch(seriesId: number, patch: Partial<SubtitleFetchState> & { status: SubtitleFetchState["status"] }): SubtitleFetchState {
+  const current = getSubtitleFetch(seriesId);
+  const next: SubtitleFetchState = {
+    status: patch.status,
+    source: patch.source === undefined ? current.source : patch.source,
+    message: patch.message === undefined ? current.message : patch.message,
+    matched: patch.matched === undefined ? current.matched : patch.matched,
+    total: patch.total === undefined ? current.total : patch.total,
+  };
+  getDb().prepare(
+    `INSERT INTO subtitle_fetches (series_id, status, source, message, matched, total, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(series_id) DO UPDATE SET
+       status = excluded.status, source = excluded.source, message = excluded.message,
+       matched = excluded.matched, total = excluded.total, updated_at = excluded.updated_at`,
+  ).run(seriesId, next.status, next.source, next.message, next.matched, next.total, now());
+  return next;
 }
 
 export function episodeHasSubtitle(seriesId: number, number: number): boolean {
