@@ -5,6 +5,8 @@ import {
   acceptModelParagraphs,
   deepDiveWithoutKey,
   sourcesFromNewsRss,
+  titleMatchesTopic,
+  topicTerms,
 } from "../src/server/deepDive.ts";
 
 const rss = `<?xml version="1.0"?>
@@ -32,6 +34,14 @@ test("a deep dive without a model keeps the real links and writes no article", (
   assert.equal(dive.note, NEEDS_KEY_NOTE);
   assert.deepEqual(dive.paragraphs, []);
   assert.match(dive.reactionNote || "", /signing in/);
+});
+
+test("related coverage uses the topic words and drops an unrelated headline", () => {
+  const terms = topicTerms("ロシア外相「欧州が交渉妨げ」欧米にくさび打つねらいか", "ラブロフ外相は国連で演説した。");
+  assert.deepEqual(terms, ["ロシア", "外相", "欧州"]);
+  assert.equal(titleMatchesTopic("独ロ外相が会談", terms), true);
+  assert.equal(titleMatchesTopic("ローマ教皇がパリ中心部で大規模ミサ", terms), false);
+  assert.equal(titleMatchesTopic("Lavrov says Europe is blocking talks", terms), true);
 });
 
 test("model text is kept only when it cites the gathered sources", () => {

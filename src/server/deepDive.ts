@@ -67,7 +67,7 @@ export function sourcesFromNewsRss(xml: string, lang: "ja" | "en", limit = 5): D
       publisher: publisher.slice(0, 80),
       snippet: snippet.slice(0, 360),
       kind: classifyCoverage(title, link),
-      lang,
+      lang: /[\u3040-\u30ff\u4e00-\u9fff]/.test(title) ? "ja" : lang,
     });
     if (sources.length >= limit) break;
   }
@@ -82,6 +82,26 @@ function tag(block: string, name: string): string | null {
 function publisherFromTitle(title: string): string {
   const parts = title.split(/\s[-|｜]\s/);
   return parts.length > 1 ? parts[parts.length - 1] : "News";
+}
+
+const TOPIC_STOP = new Set(["ニュース", "速報", "画像", "写真", "動画"]);
+
+export function topicTerms(title: string, body: string): string[] {
+  const tokens = (text: string) => (text.match(/[\u30a0-\u30ff]{2,}|[\u4e00-\u9fff]{2,}/g) || [])
+    .filter((token) => token.length <= 12 && !TOPIC_STOP.has(token));
+  const picked: string[] = [];
+  for (const token of [...tokens(title), ...tokens(body)]) {
+    if (picked.includes(token)) continue;
+    picked.push(token);
+    if (picked.length >= 3) break;
+  }
+  return picked;
+}
+
+export function titleMatchesTopic(title: string, terms: string[]): boolean {
+  if (!terms.length) return true;
+  if (!/[\u3040-\u30ff\u4e00-\u9fff]/.test(title)) return true;
+  return terms.some((term) => title.includes(term));
 }
 
 export function reactionFromMastodon(body: unknown): DiveSource[] {
@@ -175,10 +195,12 @@ export function labelParagraph(paragraph: DiveParagraph): { ja: string; en: stri
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
 
 export async function gatherDiveSources(input: { title: string; titleEn: string | null; url: string | null; body: string }): Promise<DiveSource[]> {
-  const query = input.title.replace(/\s+[-|｜].*$/, "").slice(0, 80);
+  const terms = topicTerms(input.title, input.body);
+  const query = terms.join(" ") || input.title.replace(/\s+[-|｜].*$/, "").slice(0, 80);
+  const englishQuery = englishSearch(input.titleEn) || query;
   const [japanese, english, social] = await Promise.all([
-    fetchRss(googleNewsUrl(query, "ja"), "ja"),
-    fetchRss(googleNewsUrl(input.titleEn || query, "en"), "en"),
+    fetchRss(googleNewsUrl(query, "ja"), "ja", terms),
+    fetchRss(googleNewsUrl(englishQuery, "en"), "en", terms),
     fetchReaction(query),
   ]);
   const own: DiveSource[] = input.url
@@ -192,10 +214,17 @@ export async function gatherDiveSources(input: { title: string; titleEn: string 
         lang: "ja",
       }]
     : [];
+  const storyTitle = looseTitle(input.title);
   const merged = [...own, ...japanese, ...english, ...social].filter((source, index, all) => {
-    return all.findIndex((item) => item.url === source.url) === index;
+    if (all.findIndex((item) => item.url === source.url) !== index) return false;
+    if (source.url === input.url) return true;
+    return looseTitle(source.title) !== storyTitle;
   });
   return renumberSources(merged).slice(0, 12);
+}
+
+function looseTitle(title: string): string {
+  return title.replace(/\s*[-|｜].*$/, "").replace(/\s+/g, "");
 }
 
 function googleNewsUrl(query: string, lang: "ja" | "en"): string {
@@ -207,11 +236,20 @@ function googleNewsUrl(query: string, lang: "ja" | "en"): string {
   return `https://news.google.com/rss/search?${params}`;
 }
 
-async function fetchRss(url: string, lang: "ja" | "en"): Promise<DiveSource[]> {
+function englishSearch(titleEn: string | null): string | null {
+  if (!titleEn) return null;
+  const skip = new Set(["with", "from", "that", "this", "after", "about", "into", "over", "their", "have", "been"]);
+  const words = titleEn.split(/[^A-Za-z0-9]+/).filter((word) => word.length > 3 && !skip.has(word.toLowerCase()));
+  return words.length ? words.slice(0, 5).join(" ") : null;
+}
+
+async function fetchRss(url: string, lang: "ja" | "en", terms: string[]): Promise<DiveSource[]> {
   try {
     const response = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/rss+xml, application/xml, text/xml" }, signal: AbortSignal.timeout(12_000) });
     if (!response.ok) return [];
-    return sourcesFromNewsRss(await response.text(), lang);
+    return sourcesFromNewsRss(await response.text(), lang, 12)
+      .filter((source) => titleMatchesTopic(source.title, terms))
+      .slice(0, 5);
   } catch (error) {
     console.error("Related news search failed", error);
     return [];
