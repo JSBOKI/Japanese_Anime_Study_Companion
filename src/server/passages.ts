@@ -160,10 +160,17 @@ export function composeProse(lines: LessonLine[], level: StudyLevel): Omit<Prose
     ].join(""),
   };
   const text = frames[level].replace(/\s/g, "");
+  const translations: Record<StudyLevel, string> = {
+    N5: "Read this scene as one piece, not as tiny separate sentences. The quoted lines are the start, the middle, and the end. The passage below joins that conversation.",
+    N4: "Checking one line at a time hides where the scene is going. The quotes mark the start, a turn in the middle, and the ending. The same conversation sits below without the breaks.",
+    N3: "This scene is not a list of lines to memorize one by one. The quotes are the spark, the middle, and the close. Follow that order in the passage below, and open the English after you have read it.",
+    N2: "Do not treat each subtitle as the unit. Read what the whole scene is pressing on. The quotes set the situation, the conflict, and the terms. The passage below is that exchange in order. A translation first would skip the practice of reading it yourself.",
+    N1: "This reading does not assume you are memorizing fragments. Follow the logic of the scene. The quotes are the opening, the turn, the concession, and the landing. The passage keeps the lines in time order and is not a plot summary. Look a word up if the context will not yield it. The English of the whole paragraph can wait until you have finished.",
+  };
   return {
     title: level === "N5" || level === "N4" ? "Scene in one piece" : "Reading the scene",
     text,
-    translation: null,
+    translation: translations[level],
     source: "composed",
     note:
       level === "N5" || level === "N4"

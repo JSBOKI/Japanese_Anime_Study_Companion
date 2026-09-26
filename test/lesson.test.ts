@@ -109,6 +109,7 @@ test("an advanced lesson keeps a long passage and drops easier words", async () 
   assert.ok(lesson.passages[0].charCount >= 360, String(lesson.passages.map((passage) => passage.charCount)));
   assert.ok(lesson.prose && [...lesson.prose.text].length >= 80);
   assert.equal(lesson.prose?.source, "composed");
+  assert.ok((lesson.prose?.translation || "").length > 40);
   assert.ok(lesson.prose.tokens.length > 10);
   for (const easy of ["電車", "飲む", "仕事", "責任", "雨", "今日"]) {
     assert.ok(!lemmas.includes(easy), `${easy} in ${lemmas.join(",")}`);
