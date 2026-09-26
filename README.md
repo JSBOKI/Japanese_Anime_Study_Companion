@@ -105,7 +105,7 @@ Copy `.env.example` to `.env`.
 
 ## Daily news
 
-The **News** tab loads a handful of current NHK stories, about five to eight a day. The server fetches them around 6:00 Asia/Tokyo, and also the first time you open News on a Tokyo day that has not been fetched yet. **Refresh** fetches again immediately. Stories are stored in the same SQLite file on the data disk, and about thirty days stay browsable. If NHK is down, the page says so and anything already saved stays put.
+The **News** tab loads a handful of current NHK stories, about five to eight a day. The server fetches them around 6:00 Asia/Tokyo, and also the first time you open News on a Tokyo day that has not been fetched yet. **Refresh** fetches again immediately. That day's list is the batch from the fetch, including stories NHK filed overnight. Stories are stored in the same SQLite file on the data disk, and about thirty days stay browsable. If NHK is down, the page says so and anything already saved stays put.
 
 Open a story and use **JA / EN** at the top, or **Read JA**, **Read EN**, **Listen JA**, and **Listen EN**.
 

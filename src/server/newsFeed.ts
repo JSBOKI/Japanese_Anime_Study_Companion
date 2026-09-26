@@ -265,7 +265,7 @@ async function doRefresh(): Promise<RefreshResult> {
       }
       upsertNewsStory({
         sourceId: entry.item.sourceId,
-        day: when.day,
+        day: today,
         publishedAt: when.iso,
         title: entry.item.title,
         category: entry.item.category,
