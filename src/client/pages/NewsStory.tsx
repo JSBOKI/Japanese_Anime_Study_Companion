@@ -4,7 +4,7 @@ import { api, postJson } from "../api";
 import { FuriganaWord, ReadingText } from "../components/Japanese";
 import { attachMediaSession } from "../media";
 import { isNewsOffline, saveNewsOffline } from "../offline";
-import type { FuriganaMode, NewsDetail, StudyLevel, StudySettings, VocabItem } from "../../shared/types";
+import type { FuriganaMode, NewsDetail, RollupPick, StudyLevel, StudySettings, VocabItem } from "../../shared/types";
 
 type Lang = "ja" | "en";
 type Mode = "read" | "listen";
@@ -24,6 +24,7 @@ export function NewsStoryPage() {
   const audio = useRef<HTMLAudioElement>(null);
   const [rate, setRate] = useState(1);
   const [preparing, setPreparing] = useState(false);
+  const [pick, setPick] = useState<RollupPick | null>(null);
 
   useEffect(() => {
     api<StudySettings>("/api/settings")
@@ -36,7 +37,19 @@ export function NewsStoryPage() {
     api<NewsDetail>(`/api/news/${id}`)
       .then(setStory)
       .catch((err: Error) => setError(err.message));
+    api<{ picks: RollupPick[] }>("/api/news/rollup")
+      .then((body) => setPick(body.picks.find((item) => item.storyId === Number(id)) || null))
+      .catch(() => undefined);
   }, [id]);
+
+  async function setRollup(checked: boolean, includeDeep: boolean) {
+    const body = await postJson<{ picks: RollupPick[] }>("/api/news/rollup", {
+      storyId: Number(id),
+      checked,
+      includeDeep: checked && includeDeep,
+    });
+    setPick(body.picks.find((item) => item.storyId === Number(id)) || null);
+  }
 
   function choose(nextLang: Lang, nextMode: Mode) {
     setLang(nextLang);
@@ -113,6 +126,29 @@ export function NewsStoryPage() {
           {story.level ? <span className={`jlpt ${story.level.toLowerCase()}`}>{story.level}</span> : null}
         </div>
         <h1 lang="ja">{story.title}</h1>
+        <div className="row-actions">
+          <Link className="btn primary" to={`/news/${story.id}/deeper`}>
+            Go deeper
+          </Link>
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={Boolean(pick)}
+              aria-label="Add this story to the roll-up"
+              onChange={(event) => void setRollup(event.target.checked, Boolean(pick?.includeDeep))}
+            />
+            Roll-up
+          </label>
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={Boolean(pick?.includeDeep)}
+              aria-label="Include the deep dive in the roll-up"
+              onChange={(event) => void setRollup(true, event.target.checked)}
+            />
+            Include deep dive
+          </label>
+        </div>
       </div>
 
       <div className="lang-toggle" role="group" aria-label="Language">

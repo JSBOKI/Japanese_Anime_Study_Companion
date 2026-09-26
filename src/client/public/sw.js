@@ -33,7 +33,10 @@ function isLesson(pathname) {
 }
 
 function isDrill(pathname) {
-  return /^\/api\/episodes\/\d+\/audio\/(dialogue|vocab)$/.test(pathname) || /^\/api\/news\/\d+\/audio\/(ja|en)$/.test(pathname);
+  return /^\/api\/episodes\/\d+\/audio\/(dialogue|vocab)$/.test(pathname)
+    || /^\/api\/news\/\d+\/audio\/(ja|en)$/.test(pathname)
+    || /^\/api\/news\/\d+\/deeper\/audio\/(ja|en)$/.test(pathname)
+    || /^\/api\/news\/rollup\/\d+\/parts\/\d+$/.test(pathname);
 }
 
 function isNews(pathname) {

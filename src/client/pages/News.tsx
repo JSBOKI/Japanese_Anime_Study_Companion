@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, postJson } from "../api";
 import { listOfflineNews } from "../offline";
-import type { NewsList } from "../../shared/types";
+import type { NewsList, RollupPick } from "../../shared/types";
 
 export function NewsPage() {
   const [data, setData] = useState<NewsList | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [offline] = useState(() => listOfflineNews());
+  const [picks, setPicks] = useState<RollupPick[]>([]);
 
   async function load(day?: string) {
     const query = day ? `?day=${encodeURIComponent(day)}` : "";
@@ -19,7 +20,15 @@ export function NewsPage() {
 
   useEffect(() => {
     load().catch((err: Error) => setError(err.message));
+    api<{ picks: RollupPick[] }>("/api/news/rollup")
+      .then((body) => setPicks(body.picks))
+      .catch(() => undefined);
   }, []);
+
+  async function toggle(storyId: number, checked: boolean) {
+    const body = await postJson<{ picks: RollupPick[] }>("/api/news/rollup", { storyId, checked, includeDeep: false });
+    setPicks(body.picks);
+  }
 
   async function refresh() {
     setBusy(true);
@@ -57,6 +66,9 @@ export function NewsPage() {
         <button className="btn primary" type="button" onClick={refresh} disabled={busy}>
           {busy ? "Refreshing…" : "Refresh"}
         </button>
+        <Link className="btn" to="/news/rollup">
+          Roll-up{picks.length ? ` (${picks.length})` : ""}
+        </Link>
         {data?.refreshedAt ? <span className="meta">Updated {new Date(data.refreshedAt).toLocaleString()}</span> : null}
       </div>
       {error ? <p className="banner bad">{error}</p> : null}
@@ -91,15 +103,25 @@ export function NewsPage() {
       ) : null}
       <div className="news-list">
         {data?.stories.map((story) => (
-          <Link key={story.id} className="news-card" to={`/news/${story.id}`}>
-            <div className="news-meta">
-              <span>{story.category}</span>
-              <span>{story.readingMinutes} min</span>
-              {story.level ? <span className={`jlpt ${story.level.toLowerCase()}`}>{story.level}</span> : null}
-            </div>
-            <h2 lang="ja">{story.title}</h2>
-            <p className="meta">{story.hasEnglish ? "English available" : "Japanese only"}</p>
-          </Link>
+          <article key={story.id} className="news-card">
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={picks.some((pick) => pick.storyId === story.id)}
+                aria-label={`Add ${story.title} to the roll-up`}
+                onChange={(event) => void toggle(story.id, event.target.checked)}
+              />
+            </label>
+            <Link to={`/news/${story.id}`}>
+              <div className="news-meta">
+                <span>{story.category}</span>
+                <span>{story.readingMinutes} min</span>
+                {story.level ? <span className={`jlpt ${story.level.toLowerCase()}`}>{story.level}</span> : null}
+              </div>
+              <h2 lang="ja">{story.title}</h2>
+              <p className="meta">{story.hasEnglish ? "English available" : "Japanese only"}</p>
+            </Link>
+          </article>
         ))}
       </div>
     </div>

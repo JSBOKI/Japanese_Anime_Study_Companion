@@ -4,7 +4,11 @@ type Track = {
   album?: string;
 };
 
-export function attachMediaSession(audio: HTMLAudioElement, track: Track): void {
+export function attachMediaSession(
+  audio: HTMLAudioElement,
+  track: Track,
+  tracks?: { onNext?: () => void; onPrevious?: () => void },
+): void {
   const session = navigator.mediaSession;
   if (!session) return;
   const artwork = [192, 512].map((size) => ({
@@ -18,7 +22,7 @@ export function attachMediaSession(audio: HTMLAudioElement, track: Track): void 
     album: track.album || "Yomu",
     artwork,
   });
-  const bind = (action: MediaSessionAction, run: () => void) => {
+  const bind = (action: MediaSessionAction, run: (() => void) | null) => {
     try {
       session.setActionHandler(action, run);
     } catch {
@@ -37,4 +41,6 @@ export function attachMediaSession(audio: HTMLAudioElement, track: Track): void 
   bind("seekforward", () => {
     audio.currentTime = Math.min(audio.duration || audio.currentTime + 10, audio.currentTime + 10);
   });
+  bind("nexttrack", tracks?.onNext || null);
+  bind("previoustrack", tracks?.onPrevious || null);
 }

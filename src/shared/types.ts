@@ -264,6 +264,56 @@ export type NewsList = {
   stories: NewsCard[];
 };
 
+export type DiveKind = "report" | "opinion" | "reaction";
+
+export type DiveSource = {
+  id: string;
+  title: string;
+  url: string;
+  publisher: string;
+  snippet: string;
+  kind: DiveKind;
+  lang: "ja" | "en";
+};
+
+export type DeepDive = {
+  storyId: number;
+  title: string;
+  needsKey: boolean;
+  note: string | null;
+  reactionNote: string | null;
+  sources: DiveSource[];
+  paragraphsJa: string[];
+  paragraphsEn: string[];
+  lesson: Lesson | null;
+  levelStale: boolean;
+  audioJa: boolean;
+  audioEn: boolean;
+  llm: string;
+};
+
+export type RollupPick = {
+  storyId: number;
+  title: string;
+  includeDeep: boolean;
+};
+
+export type RollupPart = {
+  index: number;
+  seconds: number;
+  bytes: number;
+  label: string;
+};
+
+export type RollupBuild = {
+  id: number;
+  lang: "ja" | "en" | "both";
+  speed: number;
+  status: "running" | "done" | "error" | string;
+  message: string | null;
+  parts: RollupPart[];
+};
+
 export type NewsDetail = NewsCard & {
   url: string | null;
   titleEn: string | null;

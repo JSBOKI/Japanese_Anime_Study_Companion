@@ -56,7 +56,7 @@ function chatFor(name: LlmName): Chat | null {
   return null;
 }
 
-function parseJson(text: string): { translations?: unknown; notes?: unknown; prose?: unknown; title?: unknown; paragraphs?: unknown } {
+export function parseJson(text: string): { translations?: unknown; notes?: unknown; prose?: unknown; title?: unknown; paragraphs?: unknown } {
   const trimmed = text.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
   const start = trimmed.indexOf("{");
   const end = trimmed.lastIndexOf("}");
@@ -133,6 +133,12 @@ export async function enrichLesson(lesson: Lesson): Promise<void> {
   }
 }
 
+export async function llmText(system: string, user: string): Promise<string | null> {
+  const chat = chatFor(llmName());
+  if (!chat) return null;
+  return chat(system, user);
+}
+
 export async function translateNews(title: string, paragraphs: string[]): Promise<{ title: string; paragraphs: string[] } | null> {
   const chat = chatFor(llmName());
   if (!chat || paragraphs.length === 0) return null;
@@ -143,7 +149,7 @@ export async function translateNews(title: string, paragraphs: string[]): Promis
     "Do not add facts that are not in the article. No markdown.",
   ].join(" ");
   try {
-    const parsed = parseJson(await chat(system, JSON.stringify({ title, paragraphs })));
+    const parsed = parseJson(await llmText(system, JSON.stringify({ title, paragraphs })) || "");
     const outTitle = typeof parsed.title === "string" ? parsed.title.trim() : "";
     const outParagraphs = Array.isArray(parsed.paragraphs) ? parsed.paragraphs.map((item) => String(item).trim()) : [];
     if (!outTitle || outParagraphs.length !== paragraphs.length) return null;

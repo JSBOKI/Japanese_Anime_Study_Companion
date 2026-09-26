@@ -20,8 +20,10 @@ import {
   getDb,
   getEpisode,
   getNewsState,
+  getDeepDive,
   getNewsStory,
   getSeries,
+  setDeepAudioPath,
   getSubtitle,
   getSubtitleFetch,
   knownLemmas,
@@ -30,11 +32,17 @@ import {
   listKnown,
   listNewsDays,
   listNewsStories,
+  listRollupPicks,
   listSeries,
   nextEpisodeNumber,
   newsCardCount,
   removeKnown,
   replaceTaught,
+  clearRollupPick,
+  clearRollupPicks,
+  getRollup,
+  latestRollup,
+  setRollupPick,
   saveNewsLesson,
   saveCard,
   getStudySettings,
@@ -52,7 +60,9 @@ import {
 import { cardsToApkg, cardsToCsv } from "./export.ts";
 import { downloadJimakuFile, listJimakuFiles, searchJimaku } from "./jimaku.ts";
 import { buildLesson } from "./lesson.ts";
-import { ensureNewsAudio } from "./newsAudio.ts";
+import { ensureDeepDive } from "./deepDive.ts";
+import { ensureNewsAudio, renderSpokenFile } from "./newsAudio.ts";
+import { startRollup } from "./newsRollup.ts";
 import { ensureFresh, lessonForStory, refreshNews, startNewsScheduler } from "./newsFeed.ts";
 import { articleCues, tokyoDay, tokyoDayOffset } from "./newsParse.ts";
 import { isFuriganaMode, isPassageLength, isStudyLevel } from "./level.ts";
@@ -191,6 +201,61 @@ async function newsList(day: string, error: string | null): Promise<NewsList> {
     refreshedAt: state.ranAt,
     stories: listNewsStories(day).map(newsCard),
   };
+}
+
+function publicRollup(build: NonNullable<ReturnType<typeof getRollup>>) {
+  return {
+    id: build.id,
+    lang: build.lang,
+    speed: build.speed,
+    status: build.status,
+    message: build.message,
+    parts: build.parts.map((part) => ({ index: part.index, seconds: part.seconds, bytes: part.bytes, label: part.label })),
+  };
+}
+
+function presentDeep(title: string, dive: NonNullable<ReturnType<typeof getDeepDive>>) {
+  const settings = getStudySettings();
+  let sources: unknown[] = [];
+  try {
+    sources = JSON.parse(dive.sourcesJson) as unknown[];
+  } catch {
+    sources = [];
+  }
+  return {
+    storyId: dive.storyId,
+    title,
+    needsKey: !dive.bodyJa,
+    note: dive.note,
+    reactionNote: dive.reactionNote,
+    sources,
+    paragraphsJa: splitParagraphs(dive.bodyJa),
+    paragraphsEn: splitParagraphs(dive.bodyEn),
+    lesson: dive.lesson,
+    levelStale: Boolean(dive.lesson && dive.lesson.level !== settings.level),
+    audioJa: Boolean(dive.audioJaPath),
+    audioEn: Boolean(dive.audioEnPath),
+    llm: dive.llm,
+  };
+}
+
+async function ensureDeepAudio(storyId: number, lang: "ja" | "en"): Promise<string> {
+  const dive = getDeepDive(storyId);
+  const body = lang === "ja" ? dive?.bodyJa : dive?.bodyEn;
+  if (!dive || !body?.trim()) throw new HttpError(404, "This deep dive has no text to read aloud. A written deep dive needs an API key.");
+  const cached = lang === "ja" ? dive.audioJaPath : dive.audioEnPath;
+  if (cached) {
+    try {
+      await fs.access(cached);
+      return cached;
+    } catch {
+      /* the file was removed */
+    }
+  }
+  const dest = path.join(audioDir, `deep-${storyId}-${lang}.mp3`);
+  await renderSpokenFile(body, lang, dest);
+  setDeepAudioPath(storyId, lang, dest);
+  return dest;
 }
 
 async function newsDetail(id: number): Promise<NewsDetail> {
@@ -609,6 +674,54 @@ async function main() {
     res.status(204).end();
   });
 
+  app.get("/api/news/rollup", (_req, res) => {
+    const build = latestRollup();
+    res.json({ picks: listRollupPicks(), build: build ? publicRollup(build) : null });
+  });
+
+  app.post("/api/news/rollup", (req, res) => {
+    const storyId = Number(req.body?.storyId);
+    const story = Number.isInteger(storyId) ? getNewsStory(storyId) : null;
+    if (!story) throw new HttpError(404, "Story not found");
+    if (req.body?.checked === false) {
+      clearRollupPick(story.id);
+    } else {
+      setRollupPick(story.id, Boolean(req.body?.includeDeep));
+    }
+    res.json({ picks: listRollupPicks() });
+  });
+
+  app.delete("/api/news/rollup", (_req, res) => {
+    clearRollupPicks();
+    res.json({ picks: [] });
+  });
+
+  app.post("/api/news/rollup/build", (req, res) => {
+    const lang = req.body?.lang === "en" || req.body?.lang === "both" ? req.body.lang : "ja";
+    const speed = [0.75, 1, 1.25].includes(Number(req.body?.speed)) ? Number(req.body.speed) : 1;
+    const id = startRollup({ lang, speed, clearAfter: Boolean(req.body?.clearAfter) });
+    const build = getRollup(id);
+    res.status(202).json(build ? publicRollup(build) : { id, status: "running" });
+  });
+
+  app.get("/api/news/rollup/:id", (req, res) => {
+    const build = getRollup(paramId(req.params.id));
+    if (!build) throw new HttpError(404, "Roll-up not found");
+    res.json(publicRollup(build));
+  });
+
+  app.get("/api/news/rollup/:id/parts/:index", (req, res) => {
+    const build = getRollup(paramId(req.params.id));
+    const index = paramId(req.params.index);
+    const part = build?.parts.find((item) => item.index === index);
+    if (!build || !part) throw new HttpError(404, "That part is not ready.");
+    if (req.query.download === "1") {
+      res.download(part.file, `yomu-rollup-${build.id}-part-${part.index}.mp3`);
+      return;
+    }
+    res.sendFile(part.file);
+  });
+
   app.get("/api/news", async (req, res) => {
     const fresh = await ensureFresh();
     const requested = typeof req.query.day === "string" ? req.query.day : "";
@@ -646,6 +759,28 @@ async function main() {
     const story = getNewsStory(paramId(req.params.id));
     if (!story?.lesson) throw new HttpError(400, "Open the story before adding words.");
     res.json(addUniqueStoryCards(story.id, story.title, story.lesson.vocabulary));
+  });
+
+  app.get("/api/news/:id/deeper", async (req, res) => {
+    const dive = await ensureDeepDive(paramId(req.params.id), false);
+    if (!dive) throw new HttpError(404, "Story not found");
+    const story = getNewsStory(dive.storyId);
+    if (!story) throw new HttpError(404, "Story not found");
+    res.json(presentDeep(story.title, dive));
+  });
+
+  app.post("/api/news/:id/deeper", async (req, res) => {
+    const dive = await ensureDeepDive(paramId(req.params.id), Boolean(req.body?.refresh));
+    if (!dive) throw new HttpError(404, "Story not found");
+    const story = getNewsStory(dive.storyId);
+    if (!story) throw new HttpError(404, "Story not found");
+    res.json(presentDeep(story.title, dive));
+  });
+
+  app.get("/api/news/:id/deeper/audio/:lang", async (req, res) => {
+    const lang = req.params.lang === "en" ? "en" : req.params.lang === "ja" ? "ja" : null;
+    if (!lang) throw new HttpError(400, "Choose Japanese or English audio.");
+    res.sendFile(await ensureDeepAudio(paramId(req.params.id), lang));
   });
 
   app.get("/api/news/:id/audio/:lang", async (req, res) => {

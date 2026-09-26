@@ -144,6 +144,34 @@ export function getDb(): DatabaseSync {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS news_deep_dives (
+      story_id INTEGER PRIMARY KEY REFERENCES news_stories(id) ON DELETE CASCADE,
+      llm TEXT NOT NULL,
+      note TEXT,
+      reaction_note TEXT,
+      sources_json TEXT NOT NULL,
+      body_ja TEXT,
+      body_en TEXT,
+      lesson_json TEXT,
+      lesson_level TEXT,
+      audio_ja_path TEXT,
+      audio_en_path TEXT,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS news_rollup_picks (
+      story_id INTEGER PRIMARY KEY REFERENCES news_stories(id) ON DELETE CASCADE,
+      include_deep INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS news_rollups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      lang TEXT NOT NULL,
+      speed REAL NOT NULL,
+      status TEXT NOT NULL,
+      message TEXT,
+      parts_json TEXT,
+      created_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS subtitle_fetches (
       series_id INTEGER PRIMARY KEY REFERENCES series(id) ON DELETE CASCADE,
       status TEXT NOT NULL,
@@ -1136,6 +1164,179 @@ export function saveNewsLesson(id: number, lesson: Lesson): void {
 export function setNewsAudioPath(id: number, lang: "ja" | "en", file: string): void {
   const column = lang === "ja" ? "audio_ja_path" : "audio_en_path";
   getDb().prepare(`UPDATE news_stories SET ${column} = ?, updated_at = ? WHERE id = ?`).run(file, now(), id);
+}
+
+export type DeepDiveRecord = {
+  storyId: number;
+  llm: string;
+  note: string | null;
+  reactionNote: string | null;
+  sourcesJson: string;
+  bodyJa: string | null;
+  bodyEn: string | null;
+  lesson: Lesson | null;
+  lessonLevel: StudyLevel | null;
+  audioJaPath: string | null;
+  audioEnPath: string | null;
+};
+
+export function getDeepDive(storyId: number): DeepDiveRecord | null {
+  const row = getDb().prepare(
+    "SELECT story_id, llm, note, reaction_note, sources_json, body_ja, body_en, lesson_json, lesson_level, audio_ja_path, audio_en_path FROM news_deep_dives WHERE story_id = ?",
+  ).get(storyId) as {
+    story_id: number;
+    llm: string;
+    note: string | null;
+    reaction_note: string | null;
+    sources_json: string;
+    body_ja: string | null;
+    body_en: string | null;
+    lesson_json: string | null;
+    lesson_level: string | null;
+    audio_ja_path: string | null;
+    audio_en_path: string | null;
+  } | undefined;
+  if (!row) return null;
+  let lesson: Lesson | null = null;
+  if (row.lesson_json) {
+    try {
+      lesson = JSON.parse(row.lesson_json) as Lesson;
+    } catch {
+      lesson = null;
+    }
+  }
+  return {
+    storyId: row.story_id,
+    llm: row.llm,
+    note: row.note,
+    reactionNote: row.reaction_note,
+    sourcesJson: row.sources_json,
+    bodyJa: row.body_ja,
+    bodyEn: row.body_en,
+    lesson,
+    lessonLevel: row.lesson_level && isStudyLevel(row.lesson_level) ? row.lesson_level : null,
+    audioJaPath: row.audio_ja_path,
+    audioEnPath: row.audio_en_path,
+  };
+}
+
+export function saveDeepDive(input: {
+  storyId: number;
+  llm: string;
+  note: string | null;
+  reactionNote: string | null;
+  sourcesJson: string;
+  bodyJa: string | null;
+  bodyEn: string | null;
+  lesson: Lesson | null;
+}): void {
+  getDb().prepare(
+    `INSERT INTO news_deep_dives (
+      story_id, llm, note, reaction_note, sources_json, body_ja, body_en, lesson_json, lesson_level, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(story_id) DO UPDATE SET
+      llm = excluded.llm, note = excluded.note, reaction_note = excluded.reaction_note,
+      sources_json = excluded.sources_json, body_ja = excluded.body_ja, body_en = excluded.body_en,
+      lesson_json = excluded.lesson_json, lesson_level = excluded.lesson_level,
+      audio_ja_path = NULL, audio_en_path = NULL, updated_at = excluded.updated_at`,
+  ).run(
+    input.storyId,
+    input.llm,
+    input.note,
+    input.reactionNote,
+    input.sourcesJson,
+    input.bodyJa,
+    input.bodyEn,
+    input.lesson ? JSON.stringify(input.lesson) : null,
+    input.lesson?.level || null,
+    now(),
+  );
+}
+
+export function saveDeepLesson(storyId: number, lesson: Lesson): void {
+  getDb().prepare("UPDATE news_deep_dives SET lesson_json = ?, lesson_level = ?, updated_at = ? WHERE story_id = ?").run(
+    JSON.stringify(lesson),
+    lesson.level,
+    now(),
+    storyId,
+  );
+}
+
+export function setDeepAudioPath(storyId: number, lang: "ja" | "en", file: string): void {
+  const column = lang === "ja" ? "audio_ja_path" : "audio_en_path";
+  getDb().prepare(`UPDATE news_deep_dives SET ${column} = ?, updated_at = ? WHERE story_id = ?`).run(file, now(), storyId);
+}
+
+export type RollupPickRow = { storyId: number; title: string; includeDeep: boolean };
+
+export function listRollupPicks(): RollupPickRow[] {
+  const rows = getDb().prepare(
+    `SELECT p.story_id, s.title, p.include_deep
+     FROM news_rollup_picks p JOIN news_stories s ON s.id = p.story_id
+     ORDER BY p.created_at, p.story_id`,
+  ).all() as { story_id: number; title: string; include_deep: number }[];
+  return rows.map((row) => ({ storyId: row.story_id, title: row.title, includeDeep: Boolean(row.include_deep) }));
+}
+
+export function setRollupPick(storyId: number, includeDeep: boolean): void {
+  getDb().prepare(
+    `INSERT INTO news_rollup_picks (story_id, include_deep, created_at) VALUES (?, ?, ?)
+     ON CONFLICT(story_id) DO UPDATE SET include_deep = excluded.include_deep`,
+  ).run(storyId, includeDeep ? 1 : 0, now());
+}
+
+export function clearRollupPick(storyId: number): void {
+  getDb().prepare("DELETE FROM news_rollup_picks WHERE story_id = ?").run(storyId);
+}
+
+export function clearRollupPicks(): void {
+  getDb().prepare("DELETE FROM news_rollup_picks").run();
+}
+
+export type RollupPartRecord = { index: number; file: string; seconds: number; bytes: number; label: string };
+
+export function createRollup(lang: string, speed: number): number {
+  const info = getDb().prepare(
+    "INSERT INTO news_rollups (lang, speed, status, message, parts_json, created_at) VALUES (?, ?, 'running', ?, NULL, ?)",
+  ).run(lang, speed, "Gathering the stories…", now());
+  return Number(info.lastInsertRowid);
+}
+
+export function updateRollup(id: number, patch: { status?: string; message?: string | null; parts?: RollupPartRecord[] | null }): void {
+  const current = getRollup(id);
+  if (!current) return;
+  getDb().prepare("UPDATE news_rollups SET status = ?, message = ?, parts_json = ? WHERE id = ?").run(
+    patch.status || current.status,
+    patch.message === undefined ? current.message : patch.message,
+    patch.parts === undefined ? (current.parts.length ? JSON.stringify(current.parts) : null) : patch.parts ? JSON.stringify(patch.parts) : null,
+    id,
+  );
+}
+
+export function getRollup(id: number): { id: number; lang: string; speed: number; status: string; message: string | null; parts: RollupPartRecord[] } | null {
+  const row = getDb().prepare("SELECT id, lang, speed, status, message, parts_json FROM news_rollups WHERE id = ?").get(id) as {
+    id: number;
+    lang: string;
+    speed: number;
+    status: string;
+    message: string | null;
+    parts_json: string | null;
+  } | undefined;
+  if (!row) return null;
+  let parts: RollupPartRecord[] = [];
+  if (row.parts_json) {
+    try {
+      parts = JSON.parse(row.parts_json) as RollupPartRecord[];
+    } catch {
+      parts = [];
+    }
+  }
+  return { id: row.id, lang: row.lang, speed: row.speed, status: row.status, message: row.message, parts };
+}
+
+export function latestRollup(): { id: number; lang: string; speed: number; status: string; message: string | null; parts: RollupPartRecord[] } | null {
+  const row = getDb().prepare("SELECT id FROM news_rollups ORDER BY id DESC LIMIT 1").get() as { id: number } | undefined;
+  return row ? getRollup(row.id) : null;
 }
 
 export function pruneNewsStories(beforeDay: string): { id: number; audioJaPath: string | null; audioEnPath: string | null }[] {
