@@ -28,7 +28,10 @@ import {
   removeKnown,
   replaceTaught,
   saveCard,
+  getStudySettings,
+  listSubtitleJobs,
   saveLesson,
+  saveStudySettings,
   stats,
   storedFromRow,
   syncCards,
@@ -37,6 +40,7 @@ import {
 import { cardsToApkg, cardsToCsv } from "./export.ts";
 import { downloadJimakuFile, listJimakuFiles, searchJimaku } from "./jimaku.ts";
 import { buildLesson } from "./lesson.ts";
+import { isFuriganaMode, isPassageLength, isStudyLevel } from "./level.ts";
 import { loadDictionaries } from "./dictionary.ts";
 import { describeTts, safeTtsName } from "./tts.ts";
 import { voices } from "./config.ts";
@@ -92,11 +96,14 @@ async function ingestSubtitle(input: {
   if (!cues.length) throw new HttpError(400, `No dialogue lines found in ${input.filename}.`);
   if (cues.length > 2500) throw new HttpError(400, "That subtitle file has too many lines.");
   const taught = taughtSets(input.seriesId, input.number);
+  const settings = getStudySettings();
   const lesson = await buildLesson({
     cues,
     known: knownLemmas(),
     taughtVocab: taught.vocab,
     taughtGrammar: taught.grammar,
+    level: settings.level,
+    passage: settings.passage,
   });
   const episodeId = saveLesson({
     seriesId: input.seriesId,
@@ -331,11 +338,48 @@ async function main() {
     res.status(201).json({ id, number: episodeNumber });
   });
 
+  app.get("/api/settings", (_req, res) => {
+    res.json(getStudySettings());
+  });
+
+  const writeSettings = (req: Request, res: Response) => {
+    const current = getStudySettings();
+    const level = isStudyLevel(String(req.body?.level || "")) ? String(req.body.level) : current.level;
+    const passage = isPassageLength(String(req.body?.passage || "")) ? String(req.body.passage) : current.passage;
+    const furigana = isFuriganaMode(String(req.body?.furigana || "")) ? String(req.body.furigana) : current.furigana;
+    if (!isStudyLevel(level) || !isPassageLength(passage) || !isFuriganaMode(furigana)) {
+      throw new HttpError(400, "Unknown level setting.");
+    }
+    res.json(saveStudySettings({ level, passage, furigana }));
+  };
+  app.put("/api/settings", writeSettings);
+  app.post("/api/settings", writeSettings);
+
+  app.post("/api/lessons/rebuild", async (_req, res) => {
+    const jobs = listSubtitleJobs();
+    const ids: number[] = [];
+    for (const job of jobs) {
+      ids.push(
+        await ingestSubtitle({
+          seriesId: job.seriesId,
+          number: job.number,
+          filename: job.filename,
+          text: job.text,
+          title: job.title,
+        }),
+      );
+    }
+    res.json({ rebuilt: ids.length });
+  });
+
   app.get("/api/episodes/:id", (req, res) => {
     const episode = getEpisode(paramId(req.params.id));
     if (!episode) throw new HttpError(404, "Episode not found");
+    const settings = getStudySettings();
+    const lesson = episode.lesson;
+    const levelStale = Boolean(lesson) && (lesson?.level !== settings.level || lesson?.passage !== settings.passage);
     const { cuesJson: _cues, ...detail } = episode;
-    res.json(detail);
+    res.json({ ...detail, levelStale });
   });
 
   app.post("/api/episodes/:id/rebuild", async (req, res) => {
@@ -348,7 +392,13 @@ async function main() {
       filename: subtitle.filename,
       text: subtitle.text,
     });
-    res.json(getEpisode(id));
+    const rebuilt = getEpisode(id);
+    if (!rebuilt) throw new HttpError(404, "Episode not found");
+    const settings = getStudySettings();
+    const levelStale =
+      Boolean(rebuilt.lesson) && (rebuilt.lesson?.level !== settings.level || rebuilt.lesson?.passage !== settings.passage);
+    const { cuesJson: _cues, ...detail } = rebuilt;
+    res.json({ ...detail, levelStale });
   });
 
   app.post("/api/episodes/:id/audio", (req, res) => {
@@ -374,8 +424,9 @@ async function main() {
 
   app.get("/api/review", (req, res) => {
     const seriesId = Number(req.query.seriesId) || null;
-    const rows = listDueCards(seriesId, 20);
-    const counts = cardCounts(seriesId);
+    const level = getStudySettings().level;
+    const rows = listDueCards(seriesId, 20, level);
+    const counts = cardCounts(seriesId, level);
     res.json({
       cards: rows.map(toReviewCard),
       dueCount: counts.due,

@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { api } from "../api";
 import { useSession } from "../session";
-import type { Stats } from "../../shared/types";
+import type { Stats, StudySettings } from "../../shared/types";
 
 export function Layout() {
   const [stats, setStats] = useState<Stats | null>(null);
+  const [level, setLevel] = useState<string | null>(null);
   const session = useSession();
 
   useEffect(() => {
@@ -13,6 +14,9 @@ export function Layout() {
       api<Stats>("/api/stats").then(setStats).catch(() => undefined);
     };
     load();
+    api<StudySettings>("/api/settings")
+      .then((settings) => setLevel(settings.level))
+      .catch(() => undefined);
     const timer = window.setInterval(load, 8000);
     window.addEventListener("focus", load);
     return () => {
@@ -30,6 +34,9 @@ export function Layout() {
             <strong>Yomu</strong>
             <small>Read what you watch</small>
           </span>
+        </NavLink>
+        <NavLink to="/level" className="level-chip">
+          {level || "Level"}
         </NavLink>
         {session.required ? (
           <button className="text-btn sign-out" type="button" onClick={() => void session.signOut()}>

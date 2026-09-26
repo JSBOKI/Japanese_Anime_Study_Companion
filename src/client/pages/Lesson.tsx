@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, postJson } from "../api";
-import { DialogueLine, FuriganaWord } from "../components/Japanese";
+import { DialogueLine, FuriganaWord, ReadingText } from "../components/Japanese";
 import { attachMediaSession } from "../media";
 import { isOfflineSaved, saveEpisodeOffline } from "../offline";
-import type { EpisodeDetail, VocabItem } from "../../shared/types";
+import type { EpisodeDetail, FuriganaMode, StudySettings, VocabItem } from "../../shared/types";
 
 export function LessonPage() {
   const { id } = useParams();
   const [episode, setEpisode] = useState<EpisodeDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [furigana, setFurigana] = useState(() => localStorage.getItem("yomu-furigana") !== "off");
+  const [furigana, setFurigana] = useState<FuriganaMode>("level");
   const [allLines, setAllLines] = useState(false);
+  const [english, setEnglish] = useState<Set<string>>(new Set());
   const [playing, setPlaying] = useState<number | null>(null);
   const [known, setKnown] = useState<Set<string>>(new Set());
   const lineAudio = useRef<HTMLAudioElement>(null);
@@ -21,6 +22,12 @@ export function LessonPage() {
     setEpisode(data);
     return data;
   }
+
+  useEffect(() => {
+    api<StudySettings>("/api/settings")
+      .then((settings) => setFurigana(settings.furigana))
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     let timer = 0;
@@ -40,10 +47,20 @@ export function LessonPage() {
     };
   }, [id]);
 
-  function toggleFurigana() {
-    const next = !furigana;
+  async function cycleFurigana() {
+    const order: FuriganaMode[] = ["level", "all", "off"];
+    const next = order[(order.indexOf(furigana) + 1) % order.length];
     setFurigana(next);
-    localStorage.setItem("yomu-furigana", next ? "on" : "off");
+    await postJson<StudySettings>("/api/settings", { furigana: next }).catch(() => undefined);
+  }
+
+  function toggleEnglish(key: string) {
+    setEnglish((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }
 
   async function playLine(index: number) {
@@ -91,6 +108,9 @@ export function LessonPage() {
     );
   }
   const lines = allLines ? lesson.lines : lesson.lines.filter((line) => line.featured);
+  const passages = lesson.passages || [];
+  const showEnglish = (key: string) => lesson.revealEnglish || english.has(key);
+  const furiganaLabel = furigana === "all" ? "Furigana all" : furigana === "off" ? "Furigana off" : "Furigana by level";
 
   return (
     <div className="page lesson">
@@ -103,8 +123,11 @@ export function LessonPage() {
           {episode.title && episode.title !== `Episode ${episode.number}` ? <span className="sub"> {episode.title}</span> : null}
         </h1>
         <div className="row-actions">
-          <button className={`btn ${furigana ? "primary" : ""}`} type="button" onClick={toggleFurigana}>
-            Furigana {furigana ? "on" : "off"}
+          <Link className="btn primary" to="/level">
+            {lesson.level || "Level"}
+          </Link>
+          <button className={`btn ${furigana !== "off" ? "primary" : ""}`} type="button" onClick={() => void cycleFurigana()}>
+            {furiganaLabel}
           </button>
           <Link className="btn" to={`/review?series=${episode.seriesId}`}>
             Review cards
@@ -112,6 +135,14 @@ export function LessonPage() {
         </div>
       </div>
       {error ? <p className="banner bad">{error}</p> : null}
+      {episode.levelStale ? (
+        <p className="banner">
+          This lesson was built{lesson.level ? ` at ${lesson.level}` : " before levels"}. Rebuild it so the reading, cards, and audio match your level. Reviewed cards keep their schedule.
+          <button className="text-btn" type="button" onClick={rebuild}>
+            Rebuild this lesson
+          </button>
+        </p>
+      ) : null}
       {episode.stale ? (
         <p className="banner">
           An earlier episode was rebuilt after this one.{" "}
@@ -123,6 +154,45 @@ export function LessonPage() {
       ) : null}
       <p className="summary">{lesson.summary}</p>
 
+      {lesson.prose ? (
+        <section id="recap" className="panel reading-block">
+          <div className="section-head">
+            <h2>{lesson.prose.title}</h2>
+            <span className="meta">{lesson.prose.source === "llm" ? "Scene recap" : "Reading guide"}</span>
+          </div>
+          <p className="hint">{lesson.prose.note}</p>
+          <ReadingText tokens={lesson.prose.tokens} furigana={furigana} />
+          {showEnglish("prose") && lesson.prose.translation ? <p className="meaning">{lesson.prose.translation}</p> : null}
+          {!lesson.revealEnglish ? (
+            <button className="btn" type="button" onClick={() => toggleEnglish("prose")}>
+              {english.has("prose") ? "Hide English" : "English"}
+            </button>
+          ) : null}
+        </section>
+      ) : null}
+
+      <section id="reading">
+        <div className="section-head">
+          <h2>Reading</h2>
+          <span className="meta">{lesson.passage === "long" ? "Longer scenes" : "Scenes"}</span>
+        </div>
+        <p className="hint">A stretch of the episode, not one subtitle at a time. Tap a word you do not know. Furigana stays on kanji above your level.</p>
+        {passages.map((passage) => (
+          <article key={passage.index} className="passage">
+            <p className="meta">
+              {passage.start} · {passage.charCount} characters
+            </p>
+            <ReadingText tokens={passage.tokens} furigana={furigana} />
+            {showEnglish(`p-${passage.index}`) ? <p className="meaning">{passage.translation || passage.gloss}</p> : null}
+            {!lesson.revealEnglish ? (
+              <button className="btn" type="button" onClick={() => toggleEnglish(`p-${passage.index}`)}>
+                {english.has(`p-${passage.index}`) ? "Hide English" : "English"}
+              </button>
+            ) : null}
+          </article>
+        ))}
+      </section>
+
       <section id="vocab">
         <h2>New words</h2>
         {lesson.vocabulary.length === 0 ? <p className="hint">Nothing new to add from this episode.</p> : null}
@@ -131,7 +201,7 @@ export function LessonPage() {
             <article key={item.lemma} className="word">
               <div className="word-top">
                 <h3>
-                  <FuriganaWord text={item.lemma} reading={item.reading} show={furigana} />
+                  <FuriganaWord text={item.lemma} reading={item.reading} show={furigana !== "off"} />
                 </h3>
                 <span className="count">×{item.count}</span>
                 {item.jlpt ? <span className={`jlpt ${item.jlpt.toLowerCase()}`}>{item.jlpt}</span> : null}
@@ -227,17 +297,27 @@ export function LessonPage() {
             </button>
           ) : null}
         </div>
-        <p className="hint">Tap a word for its reading and meaning. Furigana stays on until kana feels steady.</p>
+        <p className="hint">The same scene, line by line, if you want a timestamp or a single line played aloud. Tap a word for its reading and meaning.</p>
         {lines.map((line) => (
-          <DialogueLine key={line.index} line={line} furigana={furigana} playing={playing === line.index} onPlay={() => playLine(line.index)} />
+          <DialogueLine
+            key={line.index}
+            line={line}
+            furigana={furigana}
+            playing={playing === line.index}
+            onPlay={() => playLine(line.index)}
+            showEnglish={showEnglish(`line-${line.index}`)}
+            onToggleEnglish={lesson.revealEnglish ? undefined : () => toggleEnglish(`line-${line.index}`)}
+          />
         ))}
       </section>
 
       <section id="audio" className="panel">
         <h2>Audio</h2>
         <p className="hint">
-          The dialogue drill speaks each key line, leaves a pause for you to repeat it, says the English, then says the Japanese again.
-          The vocabulary track drills the new words.
+          {lesson.revealEnglish
+            ? "The dialogue drill speaks a sentence from the passage, leaves a pause for you to repeat it, says the English, then says the Japanese again."
+            : "The dialogue drill speaks a sentence from the passage, leaves a pause for you to repeat it, then says the Japanese again. English stays off the track at this level."}{" "}
+          The vocabulary track drills the words this level kept.
         </p>
         <AudioBlock episode={episode} onRetry={() => postJson(`/api/episodes/${id}/audio`, {}).then(() => load())} />
       </section>

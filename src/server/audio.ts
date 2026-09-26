@@ -119,8 +119,11 @@ async function generateEpisodeAudio(episodeId: number): Promise<void> {
     clips.push(file);
   };
 
+  const speakEnglish = lesson.revealEnglish !== false;
   await pushSpeech(
-    `Episode ${episode.number} dialogue drill. Listen, repeat in the pause, then check the English.`,
+    speakEnglish
+      ? `Episode ${episode.number} reading drill. Listen, repeat in the pause, then check the English.`
+      : `Episode ${episode.number} reading drill. Listen, repeat in the pause, then hear the Japanese again.`,
     "en",
   );
   await pushSilence(0.6);
@@ -132,11 +135,13 @@ async function generateEpisodeAudio(episodeId: number): Promise<void> {
       error: null,
       progress: `Speaking line ${i + 1} of ${drillLines.length}`,
     });
-    const english = line.translation || (line.gloss ? `Gloss. ${line.gloss.replace(/ · /g, ", ")}` : "No gloss for this line.");
     await pushSpeech(line.text, "ja");
     await pushSilence(shadowSeconds(line.text));
-    await pushSpeech(english, "en");
-    await pushSilence(0.45);
+    if (speakEnglish) {
+      const english = line.translation || (line.gloss ? `Gloss. ${line.gloss.replace(/ · /g, ", ")}` : "No gloss for this line.");
+      await pushSpeech(english, "en");
+      await pushSilence(0.45);
+    }
     await pushSpeech(line.text, "ja");
     await pushSilence(0.7);
   }
@@ -191,10 +196,20 @@ async function generateEpisodeAudio(episodeId: number): Promise<void> {
   });
 }
 
-function pickDrillLines(lesson: Lesson) {
+function pickDrillLines(lesson: Lesson): { text: string; translation: string | null; gloss: string }[] {
+  const passage = [...(lesson.passages || [])].sort((a, b) => b.charCount - a.charCount)[0];
+  if (passage) {
+    const parts = passage.text
+      .split(/(?<=[。！？])/)
+      .map((part) => part.trim())
+      .filter((part) => [...part].length >= 12);
+    if (parts.length) {
+      return parts.slice(0, 8).map((text) => ({ text, translation: passage.translation, gloss: "" }));
+    }
+  }
   const featured = lesson.lines.filter((line) => line.featured && line.text.length > 1);
   const pool = featured.length ? featured : lesson.lines;
-  return pool.slice(0, 12);
+  return pool.slice(0, 8).map((line) => ({ text: line.text, translation: line.translation, gloss: line.gloss }));
 }
 
 export async function ensureLineAudio(episodeId: number, index: number): Promise<string> {

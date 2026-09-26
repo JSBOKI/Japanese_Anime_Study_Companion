@@ -107,9 +107,43 @@ export type LessonLine = {
   tokens: LineToken[];
 };
 
+export type StudyLevel = "N5" | "N4" | "N3" | "N2" | "N1";
+export type PassageLength = "scene" | "long";
+export type FuriganaMode = "level" | "all" | "off";
+
+export type ReadingPassage = {
+  index: number;
+  start: string;
+  end: string;
+  text: string;
+  charCount: number;
+  gloss: string;
+  translation: string | null;
+  lineIndexes: number[];
+  tokens: LineToken[];
+};
+
+export type ProseReading = {
+  title: string;
+  text: string;
+  translation: string | null;
+  source: "llm" | "composed";
+  note: string;
+  tokens: LineToken[];
+};
+
+export type StudySettings = {
+  level: StudyLevel;
+  passage: PassageLength;
+  furigana: FuriganaMode;
+};
+
 export type Lesson = {
   generatedAt: string;
   llm: string;
+  level: StudyLevel;
+  passage: PassageLength;
+  revealEnglish: boolean;
   summary: string;
   vocabulary: VocabItem[];
   reviewVocabulary: ReviewVocab[];
@@ -117,14 +151,18 @@ export type Lesson = {
   grammarReview: GrammarNote[];
   alsoNoticed: GrammarNote[];
   lines: LessonLine[];
+  passages: ReadingPassage[];
+  prose: ProseReading | null;
   carriedOver: number;
   skippedKnown: number;
+  skippedEasy: number;
 };
 
 export type EpisodeDetail = EpisodeSummary & {
   seriesTitle: string;
   seriesNative: string | null;
   lesson: Lesson | null;
+  levelStale?: boolean;
 };
 
 export type AniListHit = {

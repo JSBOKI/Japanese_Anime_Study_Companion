@@ -46,7 +46,7 @@ p { margin: 0; }
   z-index: 5;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
   padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 12px calc(16px + env(safe-area-inset-left));
   background: rgba(243, 236, 223, 0.9);
@@ -94,6 +94,19 @@ p { margin: 0; }
 .login-card { width: min(420px, 100%); margin: 0 auto; }
 .login-card .brand-mark { width: 56px; height: 56px; font-size: 1.8rem; }
 .sign-out { min-height: 44px; padding: 8px 4px; }
+.level-chip {
+  margin-left: auto;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: var(--indigo);
+  color: #f4f7ff;
+  text-decoration: none;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+.top .sign-out { margin-left: 0; }
 .page { display: grid; gap: 16px; }
 .page-head { display: grid; gap: 8px; }
 .page-head p, .hint, .meta, .synopsis, .muted { color: var(--muted); }
@@ -239,6 +252,38 @@ input, select {
 .review-strip li { display: grid; gap: 2px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
 .review-strip small { color: var(--accent); }
 
+.passage, .reading-block { display: grid; gap: 10px; }
+.passage {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: 14px 14px 16px;
+}
+.passage-body {
+  font-family: var(--jp);
+  font-size: 1.22rem;
+  line-height: 2.15;
+  margin: 0;
+}
+.passage-body.with-ruby { line-height: 2.7; }
+.choice-grid { display: grid; gap: 8px; }
+.choice-grid.two { grid-template-columns: 1fr; }
+.choice {
+  min-height: 44px;
+  text-align: left;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  padding: 12px 14px;
+  display: grid;
+  gap: 4px;
+  cursor: pointer;
+}
+.choice strong { font-size: 1.05rem; }
+.choice span { color: var(--muted); font-size: 0.92rem; }
+.choice.on { background: var(--indigo); color: #f4f7ff; border-color: transparent; }
+.choice.on span { color: #d5deef; }
 .line-jp {
   font-size: 1.35rem;
   line-height: 2.15;

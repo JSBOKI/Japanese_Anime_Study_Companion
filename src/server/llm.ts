@@ -10,7 +10,7 @@ async function openAiChat(system: string, user: string): Promise<string> {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       "Content-Type": "application/json",
     },
-    signal: AbortSignal.timeout(25_000),
+    signal: AbortSignal.timeout(45_000),
     body: JSON.stringify({
       model: openaiModel,
       temperature: 0.2,
@@ -35,10 +35,10 @@ async function anthropicChat(system: string, user: string): Promise<string> {
       "anthropic-version": "2023-06-01",
       "Content-Type": "application/json",
     },
-    signal: AbortSignal.timeout(25_000),
+    signal: AbortSignal.timeout(45_000),
     body: JSON.stringify({
       model: anthropicModel,
-      max_tokens: 2500,
+      max_tokens: 4000,
       system,
       messages: [{ role: "user", content: user }],
     }),
@@ -56,7 +56,7 @@ function chatFor(name: LlmName): Chat | null {
   return null;
 }
 
-function parseJson(text: string): { translations?: unknown; notes?: unknown } {
+function parseJson(text: string): { translations?: unknown; notes?: unknown; prose?: unknown } {
   const trimmed = text.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
   const start = trimmed.indexOf("{");
   const end = trimmed.lastIndexOf("}");
@@ -69,15 +69,25 @@ export async function enrichLesson(lesson: Lesson): Promise<void> {
   if (!chat) return;
   const targets = lesson.lines.length <= 45 ? lesson.lines : lesson.lines.filter((line) => line.featured).slice(0, 40);
   if (targets.length === 0) return;
+  const level = lesson.level || "N2";
+  const long = lesson.passage === "long";
   const system = [
-    "You help an English-speaking beginner read Japanese dialogue.",
-    "Return only JSON: {\"translations\": string[], \"notes\": { [patternId: string]: string } }.",
-    `translations must contain exactly ${targets.length} natural English lines, in the same order.`,
-    "Keep the tone of the Japanese. Do not add jokes or cultural lectures.",
-    "notes: for each grammar id, one plain sentence about how it is used in the examples, or an empty string.",
+    `You help an adult English speaker read Japanese at JLPT ${level}.`,
+    "Return only JSON with keys translations, notes, and prose.",
+    `translations: exactly ${targets.length} natural English lines, same order as the input lines.`,
+    "notes: an object keyed by grammar id. One plain sentence on how that pattern is used here, or an empty string.",
+    "prose.japanese: a natural prose recap of the scene, not a subtitle dump.",
+    long
+      ? "prose.japanese should be about 900 to 1400 characters."
+      : "prose.japanese should be about 450 to 800 characters.",
+    `Write prose.japanese at JLPT ${level}: grammar and vocabulary appropriate to that level, adult tone, no furigana, no markdown.`,
+    "You may quote a short line, but most of the recap must be your own sentences.",
+    "prose.english: a natural English translation of that recap.",
+    "prose.title: a short Japanese title for the recap.",
     "Do not invent grammar that is not in the list. No markdown.",
   ].join(" ");
   const user = JSON.stringify({
+    level,
     lines: targets.map((line) => line.text),
     grammar: lesson.grammar.map((item) => ({
       id: item.id,
@@ -100,6 +110,19 @@ export async function enrichLesson(lesson: Lesson): Promise<void> {
       "The English under each line is a dictionary gloss, in word order, not a polished translation.",
       "Lines include a natural English translation. The gloss is still there if you want the word-by-word reading.",
     );
+  }
+  const prose = parsed.prose && typeof parsed.prose === "object" ? (parsed.prose as Record<string, unknown>) : null;
+  const japanese = typeof prose?.japanese === "string" ? prose.japanese.trim() : "";
+  if (lesson.prose && japanese.length >= 180 && /[\u3040-\u30ff\u4e00-\u9fff]/.test(japanese)) {
+    lesson.prose = {
+      ...lesson.prose,
+      title: typeof prose?.title === "string" && prose.title.trim() ? prose.title.trim().slice(0, 40) : lesson.prose.title,
+      text: japanese,
+      translation: typeof prose?.english === "string" ? prose.english.trim() : null,
+      source: "llm",
+      note: "A scene recap written for this level.",
+      tokens: [],
+    };
   }
   const notes = parsed.notes && typeof parsed.notes === "object" ? (parsed.notes as Record<string, unknown>) : {};
   for (const item of lesson.grammar) {
