@@ -31,7 +31,7 @@ async function concatOnce(files: string[], dest: string): Promise<void> {
   await ffmpeg(args);
 }
 
-async function concat(files: string[], dest: string): Promise<void> {
+export async function concatMp3(files: string[], dest: string): Promise<void> {
   if (files.length === 1) {
     await fs.copyFile(files[0], dest);
     return;
@@ -47,7 +47,7 @@ async function concat(files: string[], dest: string): Promise<void> {
     await concatOnce(files.slice(offset, offset + 20), part);
     parts.push(part);
   }
-  await concat(parts, dest);
+  await concatMp3(parts, dest);
 }
 
 function spokenText(title: string, body: string, lang: "ja" | "en"): string {
@@ -57,24 +57,30 @@ function spokenText(title: string, body: string, lang: "ja" | "en"): string {
 }
 
 async function writeAudio(storyId: number, lang: "ja" | "en", title: string, body: string): Promise<string> {
-  const text = spokenText(title, body, lang);
+  const dest = path.join(audioDir, `news-${storyId}-${lang}.mp3`);
+  await renderSpokenFile(spokenText(title, body, lang), lang, dest);
+  setNewsAudioPath(storyId, lang, dest);
+  return dest;
+}
+
+export async function renderSpokenFile(text: string, lang: "ja" | "en", dest: string): Promise<void> {
   const chunks = chunkSpeech(text, lang);
   if (!chunks.length) throw new Error("Nothing to read aloud");
-  await fs.mkdir(audioDir, { recursive: true });
-  const work = path.join(audioDir, `news-work-${storyId}-${lang}`);
+  await fs.mkdir(path.dirname(dest), { recursive: true });
+  const work = `${dest}.work`;
   await fs.rm(work, { recursive: true, force: true });
   await fs.mkdir(work, { recursive: true });
   const clips: string[] = [];
-  for (let index = 0; index < chunks.length; index++) {
-    const file = path.join(work, `c-${index}.mp3`);
-    await fs.writeFile(file, await synthesize(chunks[index], lang, false));
-    clips.push(file);
+  try {
+    for (let index = 0; index < chunks.length; index++) {
+      const file = path.join(work, `c-${index}.mp3`);
+      await fs.writeFile(file, await synthesize(chunks[index], lang, false));
+      clips.push(file);
+    }
+    await concatMp3(clips, dest);
+  } finally {
+    await fs.rm(work, { recursive: true, force: true });
   }
-  const dest = path.join(audioDir, `news-${storyId}-${lang}.mp3`);
-  await concat(clips, dest);
-  await fs.rm(work, { recursive: true, force: true });
-  setNewsAudioPath(storyId, lang, dest);
-  return dest;
 }
 
 export async function ensureNewsAudio(storyId: number, lang: "ja" | "en"): Promise<string> {

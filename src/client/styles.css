@@ -394,14 +394,20 @@ rt { font-family: var(--ui); font-size: 0.48em; color: var(--accent); }
 .news-list { display: grid; gap: 12px; }
 .news-card {
   display: grid;
-  gap: 8px;
+  grid-template-columns: auto 1fr;
+  gap: 8px 10px;
   padding: 14px 16px;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 18px;
   text-decoration: none;
   color: inherit;
+  align-items: start;
 }
+.news-card a { text-decoration: none; color: inherit; display: grid; gap: 8px; }
+.check { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; }
+.check input, .inline-check input { width: 22px; height: 22px; min-height: 22px; }
+.inline-check { display: flex; align-items: center; gap: 8px; min-height: 44px; }
 .news-card h2 { font-family: var(--jp); font-size: 1.2rem; line-height: 1.45; }
 .news-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); font-size: 0.88rem; }
 .day-chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }

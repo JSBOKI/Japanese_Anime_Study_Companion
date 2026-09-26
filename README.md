@@ -113,7 +113,11 @@ Open a story and use **JA / EN** at the top, or **Read JA**, **Read EN**, **List
 - English is a real translation only when `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` is set. With no key, Yomu looks for a matching NHK World-Japan English article and labels it as a separate English report, or as the public feed summary when the full page is missing. If nothing matches, English mode says that no English text is available. It does not invent a headline or a translation.
 - Listening uses the same Edge voices as the dialogue drills (`ja-JP-NanamiNeural` and `en-US-JennyNeural` unless you changed them). The MP3 is created the first time you press play, then reused. Speed is 0.75x, 1x, or 1.25x. **Save for offline** keeps the story and the audio that exists.
 
-No new variable is required. The current Render service keeps working with the env vars it already has.
+**Go deeper** on a story gathers related public reports (Google News in Japanese and English, plus the NHK article). Opinion pieces are labeled opinion. Public social posts are included only when a site returns them without a login. With `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, those sources are written up in Japanese at your level, with a full English version and listen buttons. The sources stay listed with links. Without a key, the page shows the links and says the written deep dive needs a key. It does not invent an article. Deep dives are cached in SQLite.
+
+**Roll-up** is for driving. Check stories on the Today list, the story, or the deep dive (there is a choice to include the deep dive). **Build roll-up** makes one MP3, split into parts of about 30 minutes or 12 MB, with a spoken “Story 3: headline” before each item. Choose Japanese, English, or Japanese then English, and 0.75x, 1x, or 1.25x. Parts can be saved offline, downloaded, or shared to the Files app. Playback continues across parts with lock-screen next and previous. Checks stay until you clear them, or until after a build if you ask.
+
+No new variable is required. The current Render service keeps working with the env vars it already has. A written deep dive uses the same LLM keys as translations.
 
 With an LLM configured, each lesson adds a natural English line under the dialogue, one short note on how each grammar point shows up in that episode, and a Japanese prose recap of the scene at your level. The built-in explanation stays either way. If the model call fails, the dictionary lesson is kept, including the composed reading guide.
 
