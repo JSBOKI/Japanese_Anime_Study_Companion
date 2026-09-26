@@ -32,7 +32,7 @@ export function startAutoSubtitles(seriesId: number, onlyNumber?: number): Subti
   if (starting.has(seriesId) || (remaining.get(seriesId) || 0) > 0) return getSubtitleFetch(seriesId);
   starting.add(seriesId);
   const total = listEpisodeSubtitleState(seriesId).length || series.episodeCount || 0;
-  setSubtitleFetch(seriesId, { status: "running", message: "Looking for Japanese subtitles…", matched: 0, total, source: null });
+  setSubtitleFetch(seriesId, { status: "running", message: "Looking for Japanese subtitles…", matched: 0, total });
   void runFetch(seriesId, onlyNumber)
     .catch((error) => {
       console.error(`Subtitle fetch failed for series ${seriesId}`, error);
@@ -82,21 +82,24 @@ async function runFetch(seriesId: number, onlyNumber?: number): Promise<void> {
         source,
         matched: 0,
         total,
-        message: found.source ? "No Japanese subtitle set was found for this series." : ARCHIVE_DOWN,
+        message: found.looked || found.source ? "No Japanese subtitle set was found for this series." : ARCHIVE_DOWN,
       });
       return;
     }
   }
-  const pending = listEpisodeSubtitleState(seriesId)
+  const after = listEpisodeSubtitleState(seriesId);
+  const subtitled = after.filter((episode) => episode.hasSubtitle).length;
+  const pending = after
     .filter((episode) => episode.hasSubtitle && !episode.hasLesson && (!onlyNumber || episode.number === onlyNumber))
     .map((episode) => episode.number);
   if (!pending.length) {
+    const previous = getSubtitleFetch(seriesId);
     setSubtitleFetch(seriesId, {
       status: "done",
-      source,
-      matched,
+      source: source || previous.source,
+      matched: subtitled,
       total,
-      message: matched ? `${countReady(seriesId)} of ${total} ready` : "Those episodes already have subtitles.",
+      message: `${countReady(seriesId)} of ${total} ready`,
     });
     return;
   }
@@ -110,12 +113,14 @@ async function collectSubtitles(input: {
   anime: boolean;
   wanted: number;
   targets: number[];
-}): Promise<{ source: string | null; episodes: Map<number, { name: string; text: string }> }> {
+}): Promise<{ source: string | null; episodes: Map<number, { name: string; text: string }>; looked: boolean }> {
   const episodes = new Map<number, { name: string; text: string }>();
   const sources: string[] = [];
+  let looked = false;
   if (jimakuKey() && input.anilistId) {
     try {
       const choice = await jimakuChoice(input.anilistId, input.titles, input.anime, input.wanted);
+      looked = true;
       if (choice) {
         const mapped = await subtitlesFromJimaku(choice, input.wanted);
         for (const number of input.targets) {
@@ -132,6 +137,7 @@ async function collectSubtitles(input: {
   if (still.length) {
     try {
       const choice = await findKitsunekkoChoice(input.titles, input.wanted);
+      looked = true;
       if (choice) {
         const mapped = await subtitlesFromPack(choice, input.wanted);
         for (const number of still) {
@@ -145,7 +151,7 @@ async function collectSubtitles(input: {
       if (!episodes.size) throw error;
     }
   }
-  return { source: sources.join("+") || null, episodes };
+  return { source: sources.join("+") || null, episodes, looked };
 }
 
 export async function jimakuChoice(anilistId: number, titles: string[], anime: boolean, wanted: number): Promise<SubtitleChoice | null> {
