@@ -132,7 +132,15 @@ export function LessonPage() {
           <Link className="btn" to={`/review?series=${episode.seriesId}`}>
             Review cards
           </Link>
+          {episode.netflixUrl ? (
+            <a className="btn" href={episode.netflixUrl} target="_blank" rel="noopener noreferrer">
+              Watch on Netflix
+            </a>
+          ) : null}
         </div>
+        {episode.netflixUrl && !episode.netflixWatchUrl ? (
+          <p className="hint">Episode {episode.number}. Opens the series on Netflix. Yomu does not play video.</p>
+        ) : null}
       </div>
       {error ? <p className="banner bad">{error}</p> : null}
       {episode.levelStale ? (

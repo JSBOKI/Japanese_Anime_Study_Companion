@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, postJson } from "../api";
 import type { EpisodeSummary, JimakuEntry, JimakuFile, SeriesSummary, SubtitleFetch } from "../../shared/types";
@@ -20,6 +20,8 @@ export function SeriesPage() {
   const [jimaku, setJimaku] = useState(false);
   const [entries, setEntries] = useState<JimakuEntry[] | null>(null);
   const [files, setFiles] = useState<JimakuFile[] | null>(null);
+  const [netflixOpen, setNetflixOpen] = useState(false);
+  const [netflixDraft, setNetflixDraft] = useState("");
 
   async function load() {
     const data = await api<Detail>(`/api/series/${id}`);
@@ -68,6 +70,30 @@ export function SeriesPage() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Subtitle search failed");
+    }
+  }
+
+  async function saveNetflix(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    try {
+      const series = await postJson<SeriesSummary>(`/api/series/${id}/netflix`, { url: netflixDraft });
+      setDetail((current) => (current ? { ...current, series } : current));
+      setNetflixOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save that Netflix link");
+    }
+  }
+
+  async function findNetflix() {
+    setError(null);
+    try {
+      const series = await postJson<SeriesSummary>(`/api/series/${id}/netflix/find`, {});
+      setDetail((current) => (current ? { ...current, series } : current));
+      setNetflixDraft(series.netflixUrl || "");
+      setNetflixOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No Netflix title was found");
     }
   }
 
@@ -131,6 +157,44 @@ export function SeriesPage() {
             {series.cardCount ? ` · ${series.cardCount} cards` : ""}
           </p>
           {series.synopsis ? <p className="synopsis">{series.synopsis}</p> : null}
+          <div className="row-actions">
+            {series.netflixUrl ? (
+              <a className="btn primary" href={series.netflixUrl} target="_blank" rel="noopener noreferrer">
+                Watch on Netflix
+              </a>
+            ) : (
+              <button className="btn" type="button" onClick={() => setNetflixOpen(true)}>
+                Add Netflix link
+              </button>
+            )}
+            {series.netflixUrl ? (
+              <button
+                className="btn"
+                type="button"
+                onClick={() => {
+                  setNetflixDraft(series.netflixUrl || "");
+                  setNetflixOpen(true);
+                }}
+              >
+                Edit Netflix link
+              </button>
+            ) : null}
+          </div>
+          {series.netflixUrl ? <p className="hint">Opens the series in Netflix. Yomu does not play video.</p> : null}
+          {netflixOpen ? (
+            <form className="stack" onSubmit={(event) => void saveNetflix(event)}>
+              <input
+                value={netflixDraft}
+                onChange={(event) => setNetflixDraft(event.target.value)}
+                placeholder="https://www.netflix.com/title/…"
+                aria-label="Netflix series link"
+              />
+              <div className="row-actions">
+                <button className="btn primary" type="submit">Save</button>
+                <button className="btn" type="button" onClick={() => void findNetflix()}>Find automatically</button>
+              </div>
+            </form>
+          ) : null}
         </div>
       </div>
       {error ? <p className="banner bad">{error}</p> : null}
@@ -236,6 +300,17 @@ export function SeriesPage() {
                   Find subtitle
                 </button>
               )}
+              {episode.netflixWatchUrl || series.netflixUrl ? (
+                <a
+                  className="btn"
+                  href={episode.netflixWatchUrl || series.netflixUrl || undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Watch on Netflix
+                  {episode.netflixWatchUrl ? null : <small>Episode {episode.number}</small>}
+                </a>
+              ) : null}
               <label className="btn file-btn">
                 Upload
                 <input
