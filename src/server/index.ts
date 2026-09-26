@@ -25,6 +25,7 @@ import {
   getSeries,
   setDeepAudioPath,
   getSubtitle,
+  getSubtitleFetch,
   knownLemmas,
   listDueCards,
   listEpisodes,
@@ -47,7 +48,9 @@ import {
   getStudySettings,
   listSubtitleJobs,
   saveLesson,
+  saveNetflixWatches,
   saveStudySettings,
+  setSeriesNetflix,
   stats,
   storedFromRow,
   syncCards,
@@ -66,6 +69,8 @@ import { isFuriganaMode, isPassageLength, isStudyLevel } from "./level.ts";
 import { loadDictionaries } from "./dictionary.ts";
 import { describeTts, safeTtsName } from "./tts.ts";
 import { voices } from "./config.ts";
+import { recoverSubtitleJobs, startAutoSubtitles } from "./subtitleAuto.ts";
+import { ensureSeriesNetflix, lookupNetflixTitle, normalizeNetflixTitleUrl } from "./netflix.ts";
 import { filesFromUpload, guessEpisodeNumber, parseSubtitle } from "./subtitles.ts";
 import { intervalLabels, reviewCard } from "./srs.ts";
 import { loadTokenizer } from "./tokenizer.ts";
@@ -388,15 +393,57 @@ async function main() {
     res.status(201).json(getSeries(series.id));
   });
 
-  app.get("/api/series/:id", (req, res) => {
+  app.get("/api/series/:id", async (req, res) => {
+    const current = getSeries(paramId(req.params.id));
+    if (!current) throw new HttpError(404, "Series not found");
+    const series = await ensureSeriesNetflix(current);
+    res.json({ series, episodes: listEpisodes(series.id), subtitleFetch: getSubtitleFetch(series.id) });
+  });
+
+  app.post("/api/series/:id/netflix", (req, res) => {
+    const seriesId = paramId(req.params.id);
+    if (!getSeries(seriesId)) throw new HttpError(404, "Series not found");
+    const raw = String(req.body?.url ?? "").trim();
+    if (!raw) {
+      res.json(setSeriesNetflix(seriesId, null, "manual"));
+      return;
+    }
+    const url = normalizeNetflixTitleUrl(raw);
+    if (!url) throw new HttpError(400, "Paste a Netflix series link, like https://www.netflix.com/title/12345.");
+    res.json(setSeriesNetflix(seriesId, url, "manual"));
+  });
+
+  app.post("/api/series/:id/netflix/find", async (req, res) => {
     const series = getSeries(paramId(req.params.id));
     if (!series) throw new HttpError(404, "Series not found");
-    res.json({ series, episodes: listEpisodes(series.id) });
+    let found: Awaited<ReturnType<typeof lookupNetflixTitle>>;
+    try {
+      found = await lookupNetflixTitle({
+        anilistId: series.anilistId,
+        titles: [series.title, series.titleRomaji || "", series.titleNative || ""].filter(Boolean),
+        year: series.year,
+      });
+    } catch {
+      throw new HttpError(502, "The Netflix catalog is not responding right now.");
+    }
+    if (!found?.url) {
+      if (!series.netflixUrl) setSeriesNetflix(series.id, null, "none");
+      throw new HttpError(404, "No Netflix title was found for this series.");
+    }
+    if (found.watches.length) saveNetflixWatches(series.id, found.watches);
+    res.json(setSeriesNetflix(series.id, found.url, found.source));
   });
 
   app.delete("/api/series/:id", (req, res) => {
     deleteSeries(paramId(req.params.id));
     res.status(204).end();
+  });
+
+  app.post("/api/series/:id/subtitles/auto", (req, res) => {
+    const seriesId = paramId(req.params.id);
+    if (!getSeries(seriesId)) throw new HttpError(404, "Series not found");
+    const only = Number(req.body?.episodeNumber);
+    res.status(202).json(startAutoSubtitles(seriesId, Number.isInteger(only) && only > 0 ? only : undefined));
   });
 
   app.post("/api/series/:id/subtitles", upload.array("files", 40), async (req, res) => {
@@ -790,13 +837,18 @@ async function main() {
   });
 
   startNewsScheduler();
+  recoverSubtitleJobs();
 
   app.listen(port, host, () => {
     const llm = llmName();
     console.log(`Yomu is running at http://localhost:${port}`);
     console.log(llm === "none" ? "Lessons: dictionary glosses and built-in grammar (no LLM key)." : `Lessons: ${llm} plus the dictionary.`);
     console.log(`Audio: ${describeTts()}.`);
-    console.log(jimakuKey() ? "Jimaku: on." : "Jimaku: off (set JIMAKU_API_KEY to search subtitles).");
+    console.log(
+      jimakuKey()
+        ? "Jimaku: on. Automatic subtitles check Jimaku, then Kitsunekko."
+        : "Jimaku: off. Automatic subtitles use Kitsunekko. Set JIMAKU_API_KEY to search Jimaku too.",
+    );
     console.log(appPassword() ? "Access: password required." : "Access: open (set APP_PASSWORD before putting this on the internet).");
   });
 }
