@@ -71,6 +71,8 @@ The service worker is registered in the production build (`npm run build`, or th
 | Flashcards and FSRS review | Yes. Progress is stored in SQLite. |
 | Anki export | Yes. CSV and `.apkg`. |
 | Dialogue and vocabulary MP3s, and per-line playback | Yes. Microsoft Edge neural voices, no key. Needs network at playback-generation time, and `ffmpeg`. |
+| Daily NHK news, Japanese reading, and Japanese audio | Yes. The fetch and the first listen need network. |
+| English news text | A matching NHK World-Japan article or its public summary, clearly labeled. A translation of the Japanese article needs an LLM key. If neither exists, the page says English is unavailable. |
 | Jimaku subtitle search | No. Needs `JIMAKU_API_KEY`. |
 | Password gate | Off until `APP_PASSWORD` is set. |
 
@@ -98,6 +100,20 @@ Copy `.env.example` to `.env`.
 | `VOICEVOX_URL` | Default `http://127.0.0.1:50021`. |
 | `VOICEVOX_SPEAKER` | Default `2` (四国めたん on a normal VOICEVOX install). English lines still use Edge. |
 | `JIMAKU_API_KEY` | Personal key from [jimaku.cc](https://jimaku.cc). Sent as the `Authorization` header. |
+| `NEWS_FETCH_HOUR` | Optional. Hour in Asia/Tokyo for the daily news fetch. Default `6`. Invalid values use 6. |
+| `NEWS_RSS_URL` | Optional. Overrides the NHK main RSS URL. When the URL contains `cat0.xml`, category feeds are derived from it. Unset uses the public NHK feeds. |
+
+## Daily news
+
+The **News** tab loads a handful of current NHK stories, about five to eight a day. The server fetches them around 6:00 Asia/Tokyo, and also the first time you open News on a Tokyo day that has not been fetched yet. **Refresh** fetches again immediately. That day's list is the batch from the fetch, including stories NHK filed overnight. Stories are stored in the same SQLite file on the data disk, and about thirty days stay browsable. If NHK is down, the page says so and anything already saved stays put.
+
+Open a story and use **JA / EN** at the top, or **Read JA**, **Read EN**, **Listen JA**, and **Listen EN**.
+
+- Japanese reading uses your saved level (N2 unless you changed it): furigana on kanji above that level, tap-for-meaning, and grammar notes for N3–N1 patterns. At N3 and above, the English under the passage stays hidden until you tap it. **Add words to flashcards** puts new words on the same FSRS queue as episode lessons, and skips words you already have a card for.
+- English is a real translation only when `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` is set. With no key, Yomu looks for a matching NHK World-Japan English article and labels it as a separate English report, or as the public feed summary when the full page is missing. If nothing matches, English mode says that no English text is available. It does not invent a headline or a translation.
+- Listening uses the same Edge voices as the dialogue drills (`ja-JP-NanamiNeural` and `en-US-JennyNeural` unless you changed them). The MP3 is created the first time you press play, then reused. Speed is 0.75x, 1x, or 1.25x. **Save for offline** keeps the story and the audio that exists.
+
+No new variable is required. The current Render service keeps working with the env vars it already has.
 
 With an LLM configured, each lesson adds a natural English line under the dialogue, one short note on how each grammar point shows up in that episode, and a Japanese prose recap of the scene at your level. The built-in explanation stays either way. If the model call fails, the dictionary lesson is kept, including the composed reading guide.
 
@@ -177,3 +193,4 @@ fly deploy
 - [Kuromoji](https://github.com/takuyaa/kuromoji.js) for segmentation and readings
 - [FSRS](https://github.com/open-spaced-repetition/ts-fsrs) for review scheduling
 - Microsoft Edge neural voices through `msedge-tts`
+- [NHK](https://www.nhk.or.jp/) public news RSS and article pages, and [NHK World-Japan](https://www3.nhk.or.jp/nhkworld/) English news, for the Daily news tab

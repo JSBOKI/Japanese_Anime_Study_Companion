@@ -33,7 +33,11 @@ function isLesson(pathname) {
 }
 
 function isDrill(pathname) {
-  return /^\/api\/episodes\/\d+\/audio\/(dialogue|vocab)$/.test(pathname);
+  return /^\/api\/episodes\/\d+\/audio\/(dialogue|vocab)$/.test(pathname) || /^\/api\/news\/\d+\/audio\/(ja|en)$/.test(pathname);
+}
+
+function isNews(pathname) {
+  return /^\/api\/news\/\d+$/.test(pathname);
 }
 
 async function ranged(response, request) {
@@ -126,7 +130,7 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(serveDrill(request));
     return;
   }
-  if (isLesson(url.pathname)) {
+  if (isLesson(url.pathname) || isNews(url.pathname)) {
     event.respondWith(networkFirst(request));
     return;
   }

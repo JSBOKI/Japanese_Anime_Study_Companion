@@ -9,7 +9,9 @@ import { audioDir, host, jimakuKey, llmName, port, rootDir, sampleDir } from "./
 import {
   addKnown,
   audioPaths,
+  addUniqueStoryCards,
   cardCounts,
+  cardLemmas,
   cardsForExport,
   createSeries,
   deleteSeries,
@@ -17,16 +19,22 @@ import {
   getCardRow,
   getDb,
   getEpisode,
+  getNewsState,
+  getNewsStory,
   getSeries,
   getSubtitle,
   knownLemmas,
   listDueCards,
   listEpisodes,
   listKnown,
+  listNewsDays,
+  listNewsStories,
   listSeries,
   nextEpisodeNumber,
+  newsCardCount,
   removeKnown,
   replaceTaught,
+  saveNewsLesson,
   saveCard,
   getStudySettings,
   listSubtitleJobs,
@@ -36,10 +44,14 @@ import {
   storedFromRow,
   syncCards,
   taughtSets,
+  type NewsStoryRecord,
 } from "./db.ts";
 import { cardsToApkg, cardsToCsv } from "./export.ts";
 import { downloadJimakuFile, listJimakuFiles, searchJimaku } from "./jimaku.ts";
 import { buildLesson } from "./lesson.ts";
+import { ensureNewsAudio } from "./newsAudio.ts";
+import { ensureFresh, lessonForStory, refreshNews, startNewsScheduler } from "./newsFeed.ts";
+import { articleCues, tokyoDay, tokyoDayOffset } from "./newsParse.ts";
 import { isFuriganaMode, isPassageLength, isStudyLevel } from "./level.ts";
 import { loadDictionaries } from "./dictionary.ts";
 import { describeTts, safeTtsName } from "./tts.ts";
@@ -47,7 +59,7 @@ import { voices } from "./config.ts";
 import { filesFromUpload, guessEpisodeNumber, parseSubtitle } from "./subtitles.ts";
 import { intervalLabels, reviewCard } from "./srs.ts";
 import { loadTokenizer } from "./tokenizer.ts";
-import type { MediaType, ReviewCard } from "../shared/types.ts";
+import type { MediaType, NewsDetail, NewsList, ReviewCard } from "../shared/types.ts";
 
 class HttpError extends Error {
   constructor(public status: number, message: string) {
@@ -140,8 +152,64 @@ function toReviewCard(row: NonNullable<ReturnType<typeof getCardRow>>): ReviewCa
     seriesId: row.series_id,
     seriesTitle: row.series_title,
     episodeNumber: row.episode_number,
+    episodeTitle: row.series_format === "news" ? row.episode_title : null,
     reps: row.reps,
     intervals: intervalLabels(card),
+  };
+}
+
+function splitParagraphs(text: string | null): string[] {
+  return (text || "").split(/\n\n/).map((part) => part.trim()).filter(Boolean);
+}
+
+function newsCard(story: NewsStoryRecord) {
+  return {
+    id: story.id,
+    title: story.title,
+    category: story.category,
+    readingMinutes: story.readingMinutes,
+    level: story.lessonLevel,
+    publishedAt: story.publishedAt,
+    hasEnglish: story.englishSource !== "none" && Boolean(story.bodyEn),
+    englishSource: story.englishSource,
+  };
+}
+
+async function newsList(day: string, error: string | null): Promise<NewsList> {
+  const state = getNewsState();
+  const message = error || state.message || null;
+  return {
+    day,
+    today: tokyoDay(new Date()),
+    days: listNewsDays(tokyoDayOffset(new Date(), -30)),
+    error: message || null,
+    refreshedAt: state.ranAt,
+    stories: listNewsStories(day).map(newsCard),
+  };
+}
+
+async function newsDetail(id: number): Promise<NewsDetail> {
+  let story = getNewsStory(id);
+  if (!story) throw new HttpError(404, "Story not found");
+  if (!story.lesson) {
+    saveNewsLesson(story.id, await lessonForStory(story));
+    story = getNewsStory(id) || story;
+  }
+  const settings = getStudySettings();
+  const lesson = story.lesson;
+  return {
+    ...newsCard(story),
+    url: story.url,
+    titleEn: story.titleEn,
+    paragraphsJa: splitParagraphs(story.bodyJa),
+    paragraphsEn: splitParagraphs(story.bodyEn),
+    englishNote: story.englishNote,
+    englishUrl: story.englishUrl,
+    lesson,
+    levelStale: Boolean(lesson && (lesson.level !== settings.level || lesson.passage !== settings.passage)),
+    cardCount: newsCardCount(story.id),
+    audioJa: Boolean(story.audioJaPath),
+    audioEn: Boolean(story.audioEnPath),
   };
 }
 
@@ -494,6 +562,61 @@ async function main() {
     res.status(204).end();
   });
 
+  app.get("/api/news", async (req, res) => {
+    const fresh = await ensureFresh();
+    const requested = typeof req.query.day === "string" ? req.query.day : "";
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(requested) ? requested : tokyoDay(new Date());
+    res.json(await newsList(day, fresh?.message || null));
+  });
+
+  app.post("/api/news/refresh", async (_req, res) => {
+    const fresh = await refreshNews();
+    res.json(await newsList(tokyoDay(new Date()), fresh.message));
+  });
+
+  app.get("/api/news/:id", async (req, res) => {
+    res.json(await newsDetail(paramId(req.params.id)));
+  });
+
+  app.post("/api/news/:id/rebuild", async (req, res) => {
+    const story = getNewsStory(paramId(req.params.id));
+    if (!story) throw new HttpError(404, "Story not found");
+    const paragraphs = story.bodyJa.split(/\n\n/).map((part) => part.trim()).filter(Boolean);
+    const settings = getStudySettings();
+    const lesson = await buildLesson({
+      cues: articleCues(story.title, paragraphs),
+      known: knownLemmas(),
+      taughtVocab: cardLemmas(),
+      taughtGrammar: new Set(),
+      level: settings.level,
+      passage: settings.passage,
+    });
+    saveNewsLesson(story.id, lesson);
+    res.json(await newsDetail(story.id));
+  });
+
+  app.post("/api/news/:id/cards", (req, res) => {
+    const story = getNewsStory(paramId(req.params.id));
+    if (!story?.lesson) throw new HttpError(400, "Open the story before adding words.");
+    res.json(addUniqueStoryCards(story.id, story.title, story.lesson.vocabulary));
+  });
+
+  app.get("/api/news/:id/audio/:lang", async (req, res) => {
+    const lang = req.params.lang === "en" ? "en" : req.params.lang === "ja" ? "ja" : null;
+    if (!lang) throw new HttpError(400, "Choose Japanese or English audio.");
+    const story = getNewsStory(paramId(req.params.id));
+    if (!story) throw new HttpError(404, "Story not found");
+    if (lang === "en" && !story.bodyEn) {
+      throw new HttpError(404, "No English audio for this story. There is no English article to read aloud.");
+    }
+    try {
+      res.sendFile(await ensureNewsAudio(story.id, lang));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not make the audio";
+      throw new HttpError(502, message);
+    }
+  });
+
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "Not found" });
   });
@@ -530,6 +653,8 @@ async function main() {
     if (status >= 500) console.error(error);
     res.status(status).json({ error: message });
   });
+
+  startNewsScheduler();
 
   app.listen(port, host, () => {
     const llm = llmName();
