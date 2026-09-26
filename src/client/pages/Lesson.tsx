@@ -4,7 +4,7 @@ import { api, postJson } from "../api";
 import { DialogueLine, FuriganaWord, ReadingText } from "../components/Japanese";
 import { attachMediaSession } from "../media";
 import { isOfflineSaved, saveEpisodeOffline } from "../offline";
-import type { EpisodeDetail, FuriganaMode, StudySettings, VocabItem } from "../../shared/types";
+import type { EpisodeDetail, FuriganaMode, StudyLevel, StudySettings, VocabItem } from "../../shared/types";
 
 export function LessonPage() {
   const { id } = useParams();
@@ -201,7 +201,7 @@ export function LessonPage() {
             <article key={item.lemma} className="word">
               <div className="word-top">
                 <h3>
-                  <FuriganaWord text={item.lemma} reading={item.reading} show={furigana !== "off"} />
+                  <FuriganaWord text={item.lemma} reading={item.reading} show={showHeadwordRuby(item, furigana, lesson.level)} />
                 </h3>
                 <span className="count">×{item.count}</span>
                 {item.jlpt ? <span className={`jlpt ${item.jlpt.toLowerCase()}`}>{item.jlpt}</span> : null}
@@ -324,6 +324,15 @@ export function LessonPage() {
       <audio ref={lineAudio} className="line-audio" preload="none" />
     </div>
   );
+}
+
+function showHeadwordRuby(item: VocabItem, mode: FuriganaMode, level: StudyLevel | undefined): boolean {
+  if (mode === "off" || !level) return false;
+  if (mode === "all") return true;
+  const rank: Record<StudyLevel, number> = { N5: 5, N4: 4, N3: 3, N2: 2, N1: 1 };
+  const tagged = item.jlpt && item.jlpt in rank ? rank[item.jlpt as StudyLevel] : null;
+  if (tagged === null) return true;
+  return tagged < rank[level];
 }
 
 function AudioBlock({ episode, onRetry }: { episode: EpisodeDetail; onRetry: () => void }) {

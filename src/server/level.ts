@@ -55,7 +55,9 @@ export function vocabCap(level: StudyLevel): number {
 }
 
 export function grammarCap(level: StudyLevel): number {
-  return level === "N5" || level === "N4" ? 8 : 10;
+  if (level === "N5" || level === "N4") return 8;
+  if (level === "N3") return 10;
+  return 14;
 }
 
 export function passageBounds(length: PassageLength): { minChars: number; maxChars: number; gapSeconds: number } {

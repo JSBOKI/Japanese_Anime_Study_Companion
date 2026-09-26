@@ -105,8 +105,8 @@ test("an advanced lesson keeps a long passage and drops easier words", async () 
   const lemmas = lesson.vocabulary.map((item) => item.lemma);
   assert.equal(lesson.level, "N2");
   assert.equal(lesson.revealEnglish, false);
-  assert.ok(lesson.passages.length >= 1);
-  assert.ok(lesson.passages.some((passage) => passage.charCount >= 360), String(lesson.passages.map((passage) => passage.charCount)));
+  assert.equal(lesson.passages.length, 2);
+  assert.ok(lesson.passages[0].charCount >= 360, String(lesson.passages.map((passage) => passage.charCount)));
   assert.ok(lesson.prose && [...lesson.prose.text].length >= 80);
   assert.equal(lesson.prose?.source, "composed");
   assert.ok(lesson.prose.tokens.length > 10);
@@ -137,7 +137,8 @@ test("an advanced lesson keeps a long passage and drops easier words", async () 
   });
   const sceneMax = Math.max(...lesson.passages.map((passage) => passage.charCount));
   const longMax = Math.max(...longer.passages.map((passage) => passage.charCount));
-  assert.ok(longMax >= sceneMax);
+  assert.equal(longer.passages.length, 1);
+  assert.ok(longMax > sceneMax);
 });
 
 test("FSRS review moves a new card forward", () => {
