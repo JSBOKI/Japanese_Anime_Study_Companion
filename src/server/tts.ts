@@ -55,14 +55,29 @@ function streamToBuffer(stream: Readable): Promise<Buffer> {
 }
 
 async function edgeSpeak(text: string, lang: SpeechLang, slow: boolean): Promise<Buffer> {
-  return locks[lang].run(async () => {
-    const engine = await edgeEngine(lang);
-    const spoken = xmlEscape(text).slice(0, 800);
-    const { audioStream } = engine.toStream(spoken, slow ? { rate: "slow" } : undefined);
-    const audio = await streamToBuffer(audioStream);
-    if (audio.length < 400) throw new Error("Edge TTS returned an empty audio clip");
-    return audio;
+  return locks[lang].run(async () => speakWith(await edgeEngine(lang), text, slow));
+}
+
+const jaVoices = new Map<string, MsEdgeTTS>();
+
+export async function synthesizeJaVoice(text: string, voice: string): Promise<Buffer> {
+  return locks.ja.run(async () => {
+    let engine = jaVoices.get(voice);
+    if (!engine) {
+      engine = new MsEdgeTTS();
+      await engine.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+      jaVoices.set(voice, engine);
+    }
+    return speakWith(engine, text, false);
   });
+}
+
+async function speakWith(engine: MsEdgeTTS, text: string, slow: boolean): Promise<Buffer> {
+  const spoken = xmlEscape(text).slice(0, 800);
+  const { audioStream } = engine.toStream(spoken, slow ? { rate: "slow" } : undefined);
+  const audio = await streamToBuffer(audioStream);
+  if (audio.length < 400) throw new Error("Edge TTS returned an empty audio clip");
+  return audio;
 }
 
 async function openAiSpeak(text: string): Promise<Buffer> {

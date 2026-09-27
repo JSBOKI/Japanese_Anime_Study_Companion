@@ -17,6 +17,12 @@ test("parses srt, vtt, and ass dialogue", () => {
     "a.ass",
   );
   assert.equal(ass[0].text, "温かいのが飲みたい。");
+  assert.equal(ass[0].speaker ?? null, null);
+  const named = parseSubtitle(
+    "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:03.00,Default,一護,0,0,0,,おはよう。\n",
+    "named.ass",
+  );
+  assert.equal(named[0].speaker, "一護");
 });
 
 test("guesses episode numbers and ignores resolutions", () => {

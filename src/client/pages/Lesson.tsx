@@ -132,6 +132,9 @@ export function LessonPage() {
           <Link className="btn" to={`/review?series=${episode.seriesId}`}>
             Review cards
           </Link>
+          <Link className="btn" to={`/episodes/${episode.id}/listen`}>
+            Listen along
+          </Link>
           {episode.netflixUrl ? (
             <a className="btn" href={episode.netflixUrl} target="_blank" rel="noopener noreferrer">
               Watch on Netflix

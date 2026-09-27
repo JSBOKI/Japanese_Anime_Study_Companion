@@ -6,6 +6,7 @@ import { SessionContext, type SessionState } from "./session";
 import { HomePage } from "./pages/Home";
 import { KnownPage } from "./pages/Known";
 import { LessonPage } from "./pages/Lesson";
+import { ListenPage } from "./pages/Listen";
 import { LevelPage } from "./pages/Level";
 import { LoginPage } from "./pages/Login";
 import { NewsPage } from "./pages/News";
@@ -53,6 +54,7 @@ export function App() {
           <Route index element={<HomePage />} />
           <Route path="new" element={<NewSeriesPage />} />
           <Route path="series/:id" element={<SeriesPage />} />
+          <Route path="episodes/:id/listen" element={<ListenPage />} />
           <Route path="episodes/:id" element={<LessonPage />} />
           <Route path="news" element={<NewsPage />} />
           <Route path="news/rollup" element={<RollupPage />} />

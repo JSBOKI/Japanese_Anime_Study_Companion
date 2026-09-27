@@ -6,6 +6,7 @@ export type Cue = {
   start: string;
   end: string;
   text: string;
+  speaker?: string | null;
 };
 
 const SUB_EXT = /\.(srt|ass|ssa|vtt)$/i;
@@ -87,7 +88,7 @@ function parseSrt(text: string): Cue[] {
     const textLines = lines.slice(lines.indexOf(timeLine) + 1);
     const text = cleanSubtitleText(textLines.join(" "));
     if (!text || !start || !end) continue;
-    cues.push({ index: cues.length, start, end, text });
+    cues.push({ index: cues.length, start, end, text, speaker: null });
   }
   return cues;
 }
@@ -111,7 +112,7 @@ function parseVtt(text: string): Cue[] {
       i++;
     }
     const text = cleanSubtitleText(textLines.join(" "));
-    if (text) cues.push({ index: cues.length, start, end, text });
+    if (text) cues.push({ index: cues.length, start, end, text, speaker: null });
   }
   return cues;
 }
@@ -127,9 +128,15 @@ function parseAss(text: string): Cue[] {
     const end = parts[2]?.trim();
     const text = cleanSubtitleText(parts.slice(9).join(",").replace(/\\N/g, " "));
     if (!text || !start || !end) continue;
-    cues.push({ index: cues.length, start, end, text });
+    cues.push({ index: cues.length, start, end, text, speaker: actorName(parts[4] || "") });
   }
   return cues;
+}
+
+function actorName(raw: string): string | null {
+  const name = raw.trim();
+  if (!name || name === "*" || /^(default|sign|signs|title|op|ed|songs?|note|comment)$/i.test(name)) return null;
+  return name.slice(0, 40);
 }
 
 export async function filesFromUpload(filename: string, buffer: Buffer): Promise<{ name: string; text: string }[]> {

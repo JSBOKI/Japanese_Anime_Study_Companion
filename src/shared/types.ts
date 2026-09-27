@@ -161,6 +161,37 @@ export type Lesson = {
   skippedEasy: number;
 };
 
+export type ListenCue = {
+  index: number;
+  text: string;
+  speaker: string | null;
+  voice: string;
+  part: number;
+  start: number;
+  end: number;
+  offset: number;
+  tokens: LineToken[];
+  gloss: string;
+  translation: string | null;
+};
+
+export type ListenAlong = {
+  episodeId: number;
+  number: number;
+  title: string | null;
+  seriesTitle: string;
+  status: "idle" | "pending" | "ready" | "error";
+  progress: string | null;
+  error: string | null;
+  parts: { index: number; seconds: number; bytes: number }[];
+  cues: ListenCue[];
+  seconds: number;
+  bytes: number;
+  estimate: { seconds: number; bytes: number };
+  nextEpisodeId: number | null;
+  diskWarning: string | null;
+};
+
 export type EpisodeDetail = EpisodeSummary & {
   seriesTitle: string;
   seriesNative: string | null;

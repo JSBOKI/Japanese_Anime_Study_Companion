@@ -391,6 +391,11 @@ function toVocab(row: Accum): VocabItem {
   };
 }
 
+export function readLine(text: string, level: StudyLevel): { tokens: LineToken[]; gloss: string } {
+  const tokens = tokenize(text).map((token) => toLineToken(token, level));
+  return { tokens, gloss: glossLine(tokens) };
+}
+
 function toLineToken(token: Token, level: StudyLevel): LineToken {
   const entry = isContent(token) ? lookupWord(token.lemma, token.reading) : null;
   const jlpt = jlptOf(token.lemma, token.reading);
