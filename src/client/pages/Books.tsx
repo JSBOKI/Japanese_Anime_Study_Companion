@@ -58,7 +58,7 @@ export function BooksPage() {
       <div className="page-head">
         <h1>Books</h1>
         <p className="hint">
-          Public-domain Japanese from Aozora Bunko. Kokoro is the N2 novel to start with. Difficulty is an honest guess for an adult reader, not a grade.
+          Public-domain Japanese from Aozora Bunko, easiest first. 走れメロス and 夢十夜 are the suggested places to start. Difficulty is an honest guess for an adult reader, not a grade.
         </p>
       </div>
       {error ? <p className="banner bad">{error}</p> : null}
@@ -103,6 +103,7 @@ export function BooksPage() {
           return (
             <Link key={book.cardId} className="book-card" to={href}>
               <div>
+                {book.startHere ? <p className="start-pill">Start here</p> : null}
                 <h2 lang="ja">{book.title}</h2>
                 {book.titleKana && book.titleKana !== book.title ? <p className="meta" lang="ja">{book.titleKana}</p> : null}
                 <p className="meta" lang="ja">{book.author}</p>

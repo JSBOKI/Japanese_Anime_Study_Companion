@@ -361,6 +361,7 @@ export type BookShelfItem = {
   lengthLabel: string | null;
   summary: string | null;
   recommended: boolean;
+  startHere: boolean;
   added: boolean;
   chapterCount: number;
   sourceUrl: string | null;
@@ -383,6 +384,7 @@ export type BookDetail = {
   difficulty: string | null;
   lengthLabel: string | null;
   summary: string | null;
+  startHere: boolean;
   sourceUrl: string | null;
   charCount: number;
   chapters: BookTocItem[];

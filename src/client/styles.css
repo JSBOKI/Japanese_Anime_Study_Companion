@@ -448,6 +448,16 @@ rt { font-family: var(--ui); font-size: 0.48em; color: var(--accent); }
   color: inherit;
 }
 .book-card h2 { font-family: var(--jp); font-size: 1.35rem; line-height: 1.35; }
+.start-pill {
+  justify-self: start;
+  margin: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
 .toc { max-height: 50vh; overflow: auto; }
 .toc-item { width: 100%; justify-content: space-between; border-radius: 12px; }
 

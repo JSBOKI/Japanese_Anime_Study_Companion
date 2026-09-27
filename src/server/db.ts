@@ -1846,6 +1846,15 @@ export function setBookLengthLabel(bookId: number, label: string): void {
   getDb().prepare("UPDATE books SET length_label = COALESCE(length_label, ?) WHERE id = ?").run(label, bookId);
 }
 
+export function updateBookCopy(bookId: number, copy: { difficulty: string; lengthLabel: string; summary: string }): void {
+  getDb().prepare("UPDATE books SET difficulty = ?, length_label = ?, summary = ?, recommended = 1 WHERE id = ?").run(
+    copy.difficulty,
+    copy.lengthLabel,
+    copy.summary,
+    bookId,
+  );
+}
+
 export function setChapterTranslation(chapterId: number, paragraphs: string[]): void {
   getDb().prepare("UPDATE book_chapters SET translation = ? WHERE id = ?").run(JSON.stringify(paragraphs), chapterId);
 }

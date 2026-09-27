@@ -63,7 +63,7 @@ import {
 import { cardsToApkg, cardsToCsv } from "./export.ts";
 import { downloadJimakuFile, listJimakuFiles, searchJimaku } from "./jimaku.ts";
 import { buildLesson, readLine } from "./lesson.ts";
-import { BookError, addBook, addChapterCards, bookChapter, bookDetail, bookShelf, saveReadingProgress, searchBooks, translateChapter } from "./aozora.ts";
+import { BookError, addBook, addChapterCards, bookChapter, bookDetail, bookShelf, saveReadingProgress, searchBooks, translateChapter, warmRecommendedShelf } from "./aozora.ts";
 import { presentBookListen, readyBookPart, startBookAudio, startChapterAudio } from "./bookAudio.ts";
 import { diskPicture, enqueueListen, enqueueSeriesListen, refreshStaleListen, seriesListenStatus } from "./listenAudio.ts";
 import { estimateListen, listenNeedsRebuild } from "./listenPlan.ts";
@@ -632,8 +632,12 @@ async function main() {
     throw error;
   }
 
-  app.get("/api/books", (_req, res) => {
-    res.json(bookShelf());
+  app.get("/api/books", async (_req, res) => {
+    try {
+      res.json(await bookShelf());
+    } catch (error) {
+      raiseBook(error);
+    }
   });
 
   app.get("/api/books/search", async (req, res) => {
@@ -1038,6 +1042,7 @@ async function main() {
 
   startNewsScheduler();
   recoverSubtitleJobs();
+  warmRecommendedShelf().catch((error) => console.error("Books shelf", error));
 
   app.listen(port, host, () => {
     const llm = llmName();

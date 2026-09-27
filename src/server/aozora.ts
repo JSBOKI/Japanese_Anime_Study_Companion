@@ -28,6 +28,7 @@ import {
   setBookLengthLabel,
   setBookProgress,
   setChapterTranslation,
+  updateBookCopy,
   upsertBook,
   type BookRecord,
 } from "./db.ts";
@@ -152,6 +153,14 @@ async function openBook(cardId: number): Promise<BookRecord> {
       book = remember(found, false);
     }
   }
+  if (recommended) {
+    updateBookCopy(book.id, {
+      difficulty: recommended.difficulty,
+      lengthLabel: recommended.lengthLabel,
+      summary: recommended.summary,
+    });
+    book = getBook(book.id) || book;
+  }
   if (bookChapterCount(book.id) > 0) return getBook(book.id) || book;
   const text = await workText(book);
   const chapters = parseAozoraText(text);
@@ -187,6 +196,7 @@ function shelfItem(
     lengthLabel: book?.lengthLabel || fallback.lengthLabel || null,
     summary: book?.summary || fallback.summary || null,
     recommended: book?.recommended || Boolean(recommendedByCard(fallback.cardId)),
+    startHere: Boolean(recommendedByCard(book?.cardId || fallback.cardId)?.startHere),
     added: Boolean(book),
     chapterCount: chapters.length,
     sourceUrl: book?.sourceUrl || fallback.sourceUrl || null,
@@ -200,7 +210,46 @@ function shelfItem(
   };
 }
 
-export function bookShelf(): { books: BookShelfItem[]; llm: boolean } {
+let shelfReady: Promise<void> | null = null;
+
+/** Fetch and parse every recommended book so the shelf opens ready to read. */
+export function warmRecommendedShelf(): Promise<void> {
+  if (!shelfReady) {
+    shelfReady = prepareShelf().catch((error) => {
+      shelfReady = null;
+      throw error;
+    });
+  }
+  return shelfReady;
+}
+
+async function prepareShelf(): Promise<void> {
+  const queue = [...RECOMMENDED];
+  const failures: string[] = [];
+  const workers = Array.from({ length: 2 }, async () => {
+    while (queue.length) {
+      const work = queue.shift();
+      if (!work) return;
+      try {
+        const book = await ensureBook(work.cardId);
+        const count = bookChapterCount(book.id);
+        if (count < 1) throw new Error("no chapters");
+        console.log(`Books: ${work.title} ready, ${count} chapters.`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Could not prepare this book.";
+        failures.push(`${work.title}: ${message}`);
+        console.error(`Books: ${work.title} failed`, error);
+      }
+    }
+  });
+  await Promise.all(workers);
+  if (failures.length) {
+    throw new BookError(502, `These books are not ready to read. ${failures.join(" ")}`);
+  }
+}
+
+export async function bookShelf(): Promise<{ books: BookShelfItem[]; llm: boolean }> {
+  await warmRecommendedShelf();
   const saved = new Map(listBooks().map((book) => [book.cardId, book]));
   const books = RECOMMENDED.map((work) => shelfItem(saved.get(work.cardId) || null, work));
   for (const book of listBooks()) {
@@ -244,6 +293,7 @@ export async function bookDetail(cardId: number): Promise<BookDetail> {
     difficulty: book.difficulty,
     lengthLabel: book.lengthLabel,
     summary: book.summary,
+    startHere: Boolean(recommendedByCard(book.cardId)?.startHere),
     sourceUrl: book.sourceUrl,
     charCount: book.charCount,
     chapters: chapters.map((chapter) => ({
