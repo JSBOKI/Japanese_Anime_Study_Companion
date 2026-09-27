@@ -292,7 +292,7 @@ input, select {
 }
 .line-jp.with-ruby { line-height: 2.45; }
 .listen-line { cursor: pointer; border-radius: 16px; }
-.listen-line.on { background: #fff1e8; outline: 2px solid var(--accent); }
+.listen-line.on { background: #ffe0d0; box-shadow: inset 4px 0 0 var(--accent); }
 .listen-hidden .listen-script { display: none; }
 .tok {
   border: 0;
