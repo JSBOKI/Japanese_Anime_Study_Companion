@@ -327,7 +327,10 @@ export function ListenPage() {
             playsInline
             onLoadedMetadata={onReady}
             onTimeUpdate={onTime}
-            onPlaying={() => setHearing(true)}
+            onPlaying={() => {
+              setHearing(true);
+              onTime();
+            }}
             onPause={() => {
               setHearing(false);
               setActive(null);
