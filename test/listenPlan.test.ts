@@ -7,11 +7,22 @@ import {
   engineNote,
   estimateListen,
   lineAtTime,
+  listenNeedsRebuild,
   pickEvictions,
   planListenParts,
+  silenceTightenFilter,
   spokenLine,
   timeForLine,
 } from "../src/server/listenPlan.ts";
+
+test("an older listen-along file is rebuilt, and long silence is capped", () => {
+  assert.equal(listenNeedsRebuild(null), true);
+  assert.equal(listenNeedsRebuild(1), true);
+  assert.equal(listenNeedsRebuild(2), false);
+  const filter = silenceTightenFilter();
+  assert.match(filter, /stop_duration=1\.5/);
+  assert.match(filter, /,areverse,/);
+});
 
 test("music notes and bare punctuation are not sent to speech", () => {
   assert.equal(spokenLine("♪♪～"), null);

@@ -18,14 +18,17 @@ import {
 import { concatMp3 } from "./newsAudio.ts";
 import {
   DISK_RESERVE_BYTES,
+  LISTEN_AUDIO_REVISION,
   LISTEN_PAUSE_SECONDS,
   assignVoices,
   bytesToFree,
   engineNote,
   estimateListen,
+  listenNeedsRebuild,
   pickEvictions,
   planListenParts,
   shouldEnlarge,
+  silenceTightenFilter,
   spokenLine,
 } from "./listenPlan.ts";
 import { parseSubtitle } from "./subtitles.ts";
@@ -66,18 +69,70 @@ function probe(file: string): Promise<number> {
   });
 }
 
+function peakVolume(file: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("ffmpeg", ["-hide_banner", "-i", file, "-af", "volumedetect", "-f", "null", "-"], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let err = "";
+    child.stderr.on("data", (chunk) => {
+      err += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      const match = err.match(/max_volume:\s*(-?\d+(?:\.\d+)?)\s*dB/);
+      if (code === 0 && match) resolve(Number(match[1]));
+      else reject(new Error("Could not measure loudness"));
+    });
+  });
+}
+
+async function tightenClip(src: string, dest: string): Promise<boolean> {
+  await ffmpeg([
+    "-y", "-hide_banner", "-loglevel", "error",
+    "-i", src,
+    "-af", silenceTightenFilter(),
+    "-acodec", "libmp3lame", "-ar", "24000", "-ac", "1", "-b:a", "48k",
+    dest,
+  ]);
+  const stat = await fs.stat(dest);
+  if (stat.size < 400) return false;
+  try {
+    const seconds = await probe(dest);
+    return seconds >= 0.12;
+  } catch {
+    return false;
+  }
+}
+
+export async function refreshStaleListen(episodeId: number): Promise<void> {
+  const current = getListen(episodeId);
+  if (!current || current.status !== "ready" || !listenNeedsRebuild(current.revision)) return;
+  const removed = clearListen(episodeId);
+  await Promise.all(removed.map((part) => fs.rm(part.file, { force: true })));
+  enqueueListen(episodeId);
+}
+
 export function enqueueListen(episodeId: number): void {
   const current = getListen(episodeId);
   if (current?.status === "pending" || queue.includes(episodeId)) return;
+  if (current?.status === "ready" && current.parts.length && listenNeedsRebuild(current.revision)) {
+    void refreshStaleListen(episodeId);
+    return;
+  }
   if (current?.status === "ready" && current.parts.length) return;
-  saveListen({ episodeId, status: "pending", progress: "Waiting to read the episode…", error: null, parts: [], cues: [] });
+  saveListen({ episodeId, status: "pending", progress: "Waiting to record the episode. Playback starts when the file is ready.", error: null, parts: [], cues: [] });
   queue.push(episodeId);
   void pump();
 }
 
 export function enqueueSeriesListen(seriesId: number): { queued: number; total: number } {
   const episodes = listSeriesSubtitleEpisodes(seriesId);
-  const pending = episodes.filter((episode) => getListen(episode.id)?.status !== "ready");
+  const pending = episodes.filter((episode) => {
+    const row = getListen(episode.id);
+    if (!row || row.status !== "ready") return true;
+    return listenNeedsRebuild(row.revision);
+  });
   seriesLeft.set(seriesId, { ids: pending.map((episode) => episode.id), done: 0 });
   setListenJob(seriesId, {
     status: pending.length ? "running" : "done",
@@ -164,13 +219,19 @@ async function generateListen(episodeId: number): Promise<void> {
       saveListen({
         episodeId,
         status: "pending",
-        progress: `Speaking line ${index + 1} of ${cues.length}`,
+        progress: `Recording line ${index + 1} of ${cues.length}. Playback starts when the file is ready.`,
         error: null,
       });
+      const raw = path.join(work, `raw-${index}.mp3`);
       const speech = path.join(work, `line-${index}.mp3`);
       try {
         const spoken = await speakJapanese(say, voices[index]);
-        await fs.writeFile(speech, spoken.audio);
+        await fs.writeFile(raw, spoken.audio);
+        const kept = await tightenClip(raw, speech);
+        if (!kept) {
+          unspoken += 1;
+          continue;
+        }
         engines.add(spoken.engine);
       } catch (error) {
         console.error(`Listen line ${index + 1} skipped`, error);
@@ -208,13 +269,26 @@ async function generateListen(episodeId: number): Promise<void> {
       const dest = path.join(audioDir, `listen-${episodeId}-part-${plan.index}.mp3`);
       await concatMp3(clips, dest);
       const stat = await fs.stat(dest);
+      const peak = await peakVolume(dest);
+      if (peak < -45) throw new Error("The recording was silent, so it was not saved.");
       parts.push({ index: plan.index, file: dest, seconds: plan.seconds, bytes: stat.size });
     }
     const seconds = timed.reduce((sum, cue) => sum + (cue.end - cue.start), 0);
     const bytes = parts.reduce((sum, part) => sum + part.bytes, 0);
     const note = engineNote([...engines], skipped);
     const extra = unspoken ? ` ${unspoken} line${unspoken === 1 ? "" : "s"} could not be read and ${unspoken === 1 ? "was" : "were"} skipped.` : "";
-    saveListen({ episodeId, status: "ready", progress: null, error: null, parts, cues: timed, seconds, bytes, engineNote: `${note}${extra}` });
+    saveListen({
+      episodeId,
+      status: "ready",
+      progress: null,
+      error: null,
+      parts,
+      cues: timed,
+      seconds,
+      bytes,
+      engineNote: `${note}${extra}`,
+      revision: LISTEN_AUDIO_REVISION,
+    });
   } finally {
     await fs.rm(work, { recursive: true, force: true });
   }

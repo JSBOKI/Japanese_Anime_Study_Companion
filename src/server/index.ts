@@ -63,8 +63,8 @@ import {
 import { cardsToApkg, cardsToCsv } from "./export.ts";
 import { downloadJimakuFile, listJimakuFiles, searchJimaku } from "./jimaku.ts";
 import { buildLesson, readLine } from "./lesson.ts";
-import { diskPicture, enqueueListen, enqueueSeriesListen, seriesListenStatus } from "./listenAudio.ts";
-import { estimateListen } from "./listenPlan.ts";
+import { diskPicture, enqueueListen, enqueueSeriesListen, refreshStaleListen, seriesListenStatus } from "./listenAudio.ts";
+import { estimateListen, listenNeedsRebuild } from "./listenPlan.ts";
 import { ensureDeepDive } from "./deepDive.ts";
 import { ensureNewsAudio, renderSpokenFile } from "./newsAudio.ts";
 import { startRollup } from "./newsRollup.ts";
@@ -87,6 +87,7 @@ async function presentListen(episodeId: number) {
   const subtitle = getSubtitle(episodeId);
   const cues = subtitle ? parseSubtitle(subtitle.text, subtitle.filename) : [];
   const estimate = estimateListen(cues);
+  await refreshStaleListen(episodeId);
   const listen = getListen(episodeId);
   const level = getStudySettings().level;
   const lessonLines = episode.lesson?.lines || [];
@@ -640,8 +641,12 @@ async function main() {
     const listen = getListen(paramId(req.params.id));
     const index = paramId(req.params.index);
     const part = listen?.parts.find((item) => item.index === index);
-    if (!listen || listen.status !== "ready" || !part) throw new HttpError(404, "That part is not ready.");
+    if (!listen || listen.status !== "ready" || !part || listenNeedsRebuild(listen.revision)) {
+      throw new HttpError(404, "That part is not ready.");
+    }
     touchListenPlayed(listen.episodeId);
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Accept-Ranges", "bytes");
     if (req.query.download === "1") {
       res.download(part.file, `yomu-listen-${listen.episodeId}-part-${part.index}.mp3`);
       return;
