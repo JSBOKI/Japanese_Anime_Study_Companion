@@ -13,6 +13,73 @@ export const JA_LISTEN_VOICES = [
   "ja-JP-ShioriNeural",
 ];
 
+const HALFWIDTH: Record<string, string> = {
+  "｡": "。", "｢": "「", "｣": "」", "､": "、", "･": "・", "ｦ": "ヲ", "ｧ": "ァ", "ｨ": "ィ", "ｩ": "ゥ", "ｪ": "ェ", "ｫ": "ォ",
+  "ｬ": "ャ", "ｭ": "ュ", "ｮ": "ョ", "ｯ": "ッ", "ｰ": "ー", "ｱ": "ア", "ｲ": "イ", "ｳ": "ウ", "ｴ": "エ", "ｵ": "オ",
+  "ｶ": "カ", "ｷ": "キ", "ｸ": "ク", "ｹ": "ケ", "ｺ": "コ", "ｻ": "サ", "ｼ": "シ", "ｽ": "ス", "ｾ": "セ", "ｿ": "ソ",
+  "ﾀ": "タ", "ﾁ": "チ", "ﾂ": "ツ", "ﾃ": "テ", "ﾄ": "ト", "ﾅ": "ナ", "ﾆ": "ニ", "ﾇ": "ヌ", "ﾈ": "ネ", "ﾉ": "ノ",
+  "ﾊ": "ハ", "ﾋ": "ヒ", "ﾌ": "フ", "ﾍ": "ヘ", "ﾎ": "ホ", "ﾏ": "マ", "ﾐ": "ミ", "ﾑ": "ム", "ﾒ": "メ", "ﾓ": "モ",
+  "ﾔ": "ヤ", "ﾕ": "ユ", "ﾖ": "ヨ", "ﾗ": "ラ", "ﾘ": "リ", "ﾙ": "ル", "ﾚ": "レ", "ﾛ": "ロ", "ﾜ": "ワ", "ﾝ": "ン",
+};
+
+const DAKUTEN: Record<string, string> = {
+  カ: "ガ", キ: "ギ", ク: "グ", ケ: "ゲ", コ: "ゴ", サ: "ザ", シ: "ジ", ス: "ズ", セ: "ゼ", ソ: "ゾ",
+  タ: "ダ", チ: "ヂ", ツ: "ヅ", テ: "デ", ト: "ド", ハ: "バ", ヒ: "ビ", フ: "ブ", ヘ: "ベ", ホ: "ボ", ウ: "ヴ",
+};
+
+const HANDAKUTEN: Record<string, string> = { ハ: "パ", ヒ: "ピ", フ: "プ", ヘ: "ペ", ホ: "ポ" };
+
+export function fullwidthKana(input: string): string {
+  let out = "";
+  for (const ch of input) {
+    if (ch === "ﾞ" || ch === "ﾟ") {
+      const prev = out.slice(-1);
+      const next = ch === "ﾞ" ? DAKUTEN[prev] : HANDAKUTEN[prev];
+      if (next) out = out.slice(0, -1) + next;
+      continue;
+    }
+    out += HALFWIDTH[ch] || ch;
+  }
+  return out;
+}
+
+/** Text that a speech engine can actually say. Music, signs, and bare punctuation become null. */
+export function spokenLine(text: string): string | null {
+  let value = fullwidthKana(text)
+    .replace(/\{[^}]*\}/g, " ")
+    .replace(/\\[Nn]/g, " ")
+    .replace(/[♪♫♬♩]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const onlyWrap = value.match(/^[（(]([^）)]+)[）)]$/);
+  if (onlyWrap) value = onlyWrap[1].trim();
+  else value = value.replace(/^[（(][^）)]{1,24}[）)]\s*/, "");
+  value = value.replace(/\s+/g, " ").trim();
+  if (!/[\u3040-\u30ff\u4e00-\u9fffA-Za-z0-9]/.test(value)) return null;
+  return value;
+}
+
+export function engineNote(used: string[], skipped: number): string {
+  const names: Record<string, string> = {
+    edge: "Microsoft Edge",
+    openai: "OpenAI",
+    google: "Google Cloud",
+    gtts: "Google Translate",
+  };
+  const unique = [...new Set(used)];
+  let note = "Read with Microsoft Edge voices.";
+  if (unique.length === 1 && unique[0] !== "edge") {
+    note = `Read with ${names[unique[0]] || unique[0]}. Microsoft Edge could not read from this server.`;
+  } else if (unique.length > 1) {
+    const rest = unique.filter((name) => name !== "edge").map((name) => names[name] || name);
+    note = unique.includes("edge")
+      ? `Read with Microsoft Edge. Some lines used ${rest.join(" and ")}.`
+      : `Read with ${unique.map((name) => names[name] || name).join(" and ")}.`;
+  }
+  if (skipped > 0) note += ` ${skipped} line${skipped === 1 ? "" : "s"} that ${skipped === 1 ? "was" : "were"} only music or punctuation stayed silent.`;
+  return note;
+}
+
 export function assignVoices(
   lines: { speaker?: string | null; text: string }[],
   voices: string[] = JA_LISTEN_VOICES,

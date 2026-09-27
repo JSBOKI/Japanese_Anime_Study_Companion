@@ -191,6 +191,7 @@ export function getDb(): DatabaseSync {
       seconds REAL,
       bytes INTEGER,
       last_played_at TEXT,
+      engine_note TEXT,
       updated_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS listen_jobs (
@@ -207,6 +208,7 @@ export function getDb(): DatabaseSync {
   addColumn(db, "episodes", "netflix_watch_url", "TEXT");
   db.prepare("UPDATE episodes SET audio_status = 'idle', audio_progress = NULL WHERE audio_status = 'pending'").run();
   db.prepare("UPDATE episode_listen SET status = 'idle', progress = NULL WHERE status = 'pending'").run();
+  addColumn(db, "episode_listen", "engine_note", "TEXT");
   db.prepare("UPDATE listen_jobs SET status = 'idle', message = NULL WHERE status = 'running'").run();
   database = db;
   return db;
@@ -1383,6 +1385,7 @@ export type ListenRecord = {
   seconds: number;
   bytes: number;
   lastPlayedAt: string | null;
+  engineNote: string | null;
 };
 
 function mapListen(row: {
@@ -1395,6 +1398,7 @@ function mapListen(row: {
   seconds: number | null;
   bytes: number | null;
   last_played_at: string | null;
+  engine_note?: string | null;
 }): ListenRecord {
   const status = row.status === "pending" || row.status === "ready" || row.status === "error" ? row.status : "idle";
   return {
@@ -1407,6 +1411,7 @@ function mapListen(row: {
     seconds: row.seconds || 0,
     bytes: row.bytes || 0,
     lastPlayedAt: row.last_played_at,
+    engineNote: row.engine_note || null,
   };
 }
 
@@ -1422,7 +1427,7 @@ function parseJsonList<T>(value: string | null): T[] {
 
 export function getListen(episodeId: number): ListenRecord | null {
   const row = getDb().prepare(
-    "SELECT episode_id, status, progress, error, parts_json, lines_json, seconds, bytes, last_played_at FROM episode_listen WHERE episode_id = ?",
+    "SELECT episode_id, status, progress, error, parts_json, lines_json, seconds, bytes, last_played_at, engine_note FROM episode_listen WHERE episode_id = ?",
   ).get(episodeId) as Parameters<typeof mapListen>[0] | undefined;
   return row ? mapListen(row) : null;
 }
@@ -1436,13 +1441,14 @@ export function saveListen(input: {
   cues?: ListenCueRecord[] | null;
   seconds?: number;
   bytes?: number;
+  engineNote?: string | null;
 }): void {
   const current = getListen(input.episodeId);
   const parts = input.parts === undefined ? current?.parts || [] : input.parts || [];
   const cues = input.cues === undefined ? current?.cues || [] : input.cues || [];
   getDb().prepare(
-    `INSERT INTO episode_listen (episode_id, status, progress, error, parts_json, lines_json, seconds, bytes, last_played_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO episode_listen (episode_id, status, progress, error, parts_json, lines_json, seconds, bytes, last_played_at, engine_note, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(episode_id) DO UPDATE SET
        status = excluded.status,
        progress = excluded.progress,
@@ -1451,6 +1457,7 @@ export function saveListen(input: {
        lines_json = excluded.lines_json,
        seconds = excluded.seconds,
        bytes = excluded.bytes,
+       engine_note = excluded.engine_note,
        updated_at = excluded.updated_at`,
   ).run(
     input.episodeId,
@@ -1462,6 +1469,7 @@ export function saveListen(input: {
     input.seconds ?? current?.seconds ?? 0,
     input.bytes ?? current?.bytes ?? 0,
     current?.lastPlayedAt || null,
+    input.engineNote === undefined ? current?.engineNote || null : input.engineNote,
     now(),
   );
 }

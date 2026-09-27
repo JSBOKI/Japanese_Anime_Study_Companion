@@ -21,13 +21,15 @@ import {
   LISTEN_PAUSE_SECONDS,
   assignVoices,
   bytesToFree,
+  engineNote,
   estimateListen,
   pickEvictions,
   planListenParts,
   shouldEnlarge,
+  spokenLine,
 } from "./listenPlan.ts";
 import { parseSubtitle } from "./subtitles.ts";
-import { safeTtsName, synthesize, synthesizeJaVoice } from "./tts.ts";
+import { speakJapanese } from "./tts.ts";
 
 const queue: number[] = [];
 const seriesLeft = new Map<number, { ids: number[]; done: number }>();
@@ -62,11 +64,6 @@ function probe(file: string): Promise<number> {
       else reject(new Error("Could not read audio length"));
     });
   });
-}
-
-async function speakLine(text: string, voice: string): Promise<Buffer> {
-  if (safeTtsName() === "edge") return synthesizeJaVoice(text, voice);
-  return synthesize(text, "ja");
 }
 
 export function enqueueListen(episodeId: number): void {
@@ -154,8 +151,16 @@ async function generateListen(episodeId: number): Promise<void> {
     pause,
   ]);
   const measured: { index: number; seconds: number; bytes: number; speech: string }[] = [];
+  const engines = new Set<string>();
+  let skipped = 0;
+  let unspoken = 0;
   try {
     for (let index = 0; index < cues.length; index++) {
+      const say = spokenLine(cues[index].text);
+      if (!say) {
+        skipped += 1;
+        continue;
+      }
       saveListen({
         episodeId,
         status: "pending",
@@ -163,10 +168,21 @@ async function generateListen(episodeId: number): Promise<void> {
         error: null,
       });
       const speech = path.join(work, `line-${index}.mp3`);
-      await fs.writeFile(speech, await speakLine(cues[index].text, voices[index]));
+      try {
+        const spoken = await speakJapanese(say, voices[index]);
+        await fs.writeFile(speech, spoken.audio);
+        engines.add(spoken.engine);
+      } catch (error) {
+        console.error(`Listen line ${index + 1} skipped`, error);
+        unspoken += 1;
+        continue;
+      }
       const seconds = await probe(speech);
       const stat = await fs.stat(speech);
       measured.push({ index: cues[index].index, seconds: seconds + LISTEN_PAUSE_SECONDS, bytes: stat.size, speech });
+    }
+    if (!measured.length) {
+      throw new Error("No speech engine could read this episode. Edge returned empty audio, and the backup voices failed too.");
     }
     const plans = planListenParts(measured);
     const parts: ListenPartRecord[] = [];
@@ -196,7 +212,9 @@ async function generateListen(episodeId: number): Promise<void> {
     }
     const seconds = timed.reduce((sum, cue) => sum + (cue.end - cue.start), 0);
     const bytes = parts.reduce((sum, part) => sum + part.bytes, 0);
-    saveListen({ episodeId, status: "ready", progress: null, error: null, parts, cues: timed, seconds, bytes });
+    const note = engineNote([...engines], skipped);
+    const extra = unspoken ? ` ${unspoken} line${unspoken === 1 ? "" : "s"} could not be read and ${unspoken === 1 ? "was" : "were"} skipped.` : "";
+    saveListen({ episodeId, status: "ready", progress: null, error: null, parts, cues: timed, seconds, bytes, engineNote: `${note}${extra}` });
   } finally {
     await fs.rm(work, { recursive: true, force: true });
   }
