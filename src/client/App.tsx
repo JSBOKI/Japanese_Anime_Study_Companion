@@ -3,6 +3,9 @@ import { Route, Routes } from "react-router-dom";
 import { api, postJson } from "./api";
 import { Layout } from "./components/Layout";
 import { SessionContext, type SessionState } from "./session";
+import { BookListenPage } from "./pages/BookListen";
+import { BookReadPage } from "./pages/BookRead";
+import { BooksPage } from "./pages/Books";
 import { HomePage } from "./pages/Home";
 import { KnownPage } from "./pages/Known";
 import { LessonPage } from "./pages/Lesson";
@@ -56,6 +59,9 @@ export function App() {
           <Route path="series/:id" element={<SeriesPage />} />
           <Route path="episodes/:id/listen" element={<ListenPage />} />
           <Route path="episodes/:id" element={<LessonPage />} />
+          <Route path="books" element={<BooksPage />} />
+          <Route path="books/:cardId/listen/:chapter" element={<BookListenPage />} />
+          <Route path="books/:cardId" element={<BookReadPage />} />
           <Route path="news" element={<NewsPage />} />
           <Route path="news/rollup" element={<RollupPage />} />
           <Route path="news/:id/deeper" element={<NewsDeepPage />} />

@@ -1,4 +1,4 @@
-const SHELL = "yomu-shell-v2";
+const SHELL = "yomu-shell-v3";
 const OFFLINE = "yomu-offline-v1";
 const SHELL_FILES = [
   "/",
@@ -37,7 +37,8 @@ function isDrill(pathname) {
     || /^\/api\/news\/\d+\/audio\/(ja|en)$/.test(pathname)
     || /^\/api\/news\/\d+\/deeper\/audio\/(ja|en)$/.test(pathname)
     || /^\/api\/news\/rollup\/\d+\/parts\/\d+$/.test(pathname)
-    || /^\/api\/episodes\/\d+\/listen\/parts\/\d+$/.test(pathname);
+    || /^\/api\/episodes\/\d+\/listen\/parts\/\d+$/.test(pathname)
+    || /^\/api\/books\/\d+\/chapters\/\d+\/listen\/parts\/\d+$/.test(pathname);
 }
 
 function isNews(pathname) {

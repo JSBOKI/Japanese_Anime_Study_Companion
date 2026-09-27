@@ -64,6 +64,30 @@ export function parseJson(text: string): { translations?: unknown; notes?: unkno
   return JSON.parse(trimmed.slice(start, end + 1)) as { translations?: unknown; notes?: unknown };
 }
 
+/** Natural English for a chapter. Returns null when no LLM key is set. */
+export async function translateParagraphs(paragraphs: string[]): Promise<string[] | null> {
+  const chat = chatFor(llmName());
+  if (!chat || !paragraphs.length) return null;
+  const out: string[] = [];
+  for (let index = 0; index < paragraphs.length; index += 8) {
+    const slice = paragraphs.slice(index, index + 8);
+    const system = [
+      "You translate Japanese literature into natural English for an adult learner.",
+      "Return only JSON: {\"translations\": [ ... ]}.",
+      `translations must contain exactly ${slice.length} strings, in the same order as the numbered paragraphs.`,
+      "Do not add notes, titles, or romanization.",
+    ].join(" ");
+    const user = slice.map((paragraph, number) => `${number + 1}. ${paragraph}`).join("\n\n");
+    const parsed = parseJson(await chat(system, user));
+    const list = Array.isArray(parsed.translations) ? parsed.translations.map((item) => String(item).trim()) : [];
+    if (list.length !== slice.length || list.some((item) => !item)) {
+      throw new Error("The translation did not match this chapter.");
+    }
+    out.push(...list);
+  }
+  return out;
+}
+
 export async function enrichLesson(lesson: Lesson): Promise<void> {
   const chat = chatFor(llmName());
   if (!chat) return;

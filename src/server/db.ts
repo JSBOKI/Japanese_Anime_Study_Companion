@@ -203,6 +203,62 @@ export function getDb(): DatabaseSync {
       message TEXT,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS books (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      aozora_card INTEGER NOT NULL UNIQUE,
+      aozora_person INTEGER,
+      title TEXT NOT NULL,
+      title_kana TEXT,
+      author TEXT NOT NULL,
+      difficulty TEXT,
+      length_label TEXT,
+      summary TEXT,
+      source_url TEXT,
+      text_url TEXT,
+      xhtml_url TEXT,
+      recommended INTEGER NOT NULL DEFAULT 0,
+      series_id INTEGER,
+      char_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS book_chapters (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+      idx INTEGER NOT NULL,
+      part_title TEXT,
+      title TEXT NOT NULL,
+      body_json TEXT NOT NULL,
+      translation TEXT,
+      UNIQUE(book_id, idx)
+    );
+    CREATE TABLE IF NOT EXISTS book_progress (
+      book_id INTEGER PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE,
+      chapter_index INTEGER NOT NULL,
+      paragraph_index INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS book_listen (
+      chapter_id INTEGER PRIMARY KEY REFERENCES book_chapters(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      progress TEXT,
+      error TEXT,
+      parts_json TEXT,
+      cues_json TEXT,
+      seconds REAL,
+      bytes INTEGER,
+      last_played_at TEXT,
+      engine_note TEXT,
+      revision INTEGER,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS book_jobs (
+      book_id INTEGER PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      done INTEGER NOT NULL DEFAULT 0,
+      total INTEGER NOT NULL DEFAULT 0,
+      message TEXT,
+      updated_at TEXT NOT NULL
+    );
   `);
   addColumn(db, "series", "netflix_url", "TEXT");
   addColumn(db, "series", "netflix_source", "TEXT");
@@ -212,6 +268,8 @@ export function getDb(): DatabaseSync {
   addColumn(db, "episode_listen", "engine_note", "TEXT");
   addColumn(db, "episode_listen", "revision", "INTEGER");
   db.prepare("UPDATE listen_jobs SET status = 'idle', message = NULL WHERE status = 'running'").run();
+  db.prepare("UPDATE book_listen SET status = 'idle', progress = NULL WHERE status = 'pending'").run();
+  db.prepare("UPDATE book_jobs SET status = 'idle', message = NULL WHERE status = 'running'").run();
   database = db;
   return db;
 }
@@ -271,7 +329,7 @@ const seriesSelect = `
 `;
 
 export function listSeries(): SeriesSummary[] {
-  const rows = getDb().prepare(`${seriesSelect} WHERE COALESCE(s.format, '') != 'news' ORDER BY s.created_at DESC`).all(now()) as SeriesRow[];
+  const rows = getDb().prepare(`${seriesSelect} WHERE COALESCE(s.format, '') NOT IN ('news', 'book') ORDER BY s.created_at DESC`).all(now()) as SeriesRow[];
   return rows.map(mapSeries);
 }
 
@@ -1537,6 +1595,432 @@ export function setListenJob(seriesId: number, patch: { status: string; done?: n
 
 export function getListenJob(seriesId: number): { status: string; done: number; total: number; message: string | null } | null {
   const row = getDb().prepare("SELECT status, done, total, message FROM listen_jobs WHERE series_id = ?").get(seriesId) as
+    | { status: string; done: number; total: number; message: string | null }
+    | undefined;
+  return row || null;
+}
+
+export type BookRecord = {
+  id: number;
+  cardId: number;
+  personId: number | null;
+  title: string;
+  titleKana: string | null;
+  author: string;
+  difficulty: string | null;
+  lengthLabel: string | null;
+  summary: string | null;
+  sourceUrl: string | null;
+  textUrl: string | null;
+  xhtmlUrl: string | null;
+  recommended: boolean;
+  seriesId: number | null;
+  charCount: number;
+  createdAt: string;
+};
+
+type BookSql = {
+  id: number;
+  aozora_card: number;
+  aozora_person: number | null;
+  title: string;
+  title_kana: string | null;
+  author: string;
+  difficulty: string | null;
+  length_label: string | null;
+  summary: string | null;
+  source_url: string | null;
+  text_url: string | null;
+  xhtml_url: string | null;
+  recommended: number;
+  series_id: number | null;
+  char_count: number;
+  created_at: string;
+};
+
+function mapBook(row: BookSql): BookRecord {
+  return {
+    id: row.id,
+    cardId: row.aozora_card,
+    personId: row.aozora_person,
+    title: row.title,
+    titleKana: row.title_kana,
+    author: row.author,
+    difficulty: row.difficulty,
+    lengthLabel: row.length_label,
+    summary: row.summary,
+    sourceUrl: row.source_url,
+    textUrl: row.text_url,
+    xhtmlUrl: row.xhtml_url,
+    recommended: Boolean(row.recommended),
+    seriesId: row.series_id,
+    charCount: row.char_count || 0,
+    createdAt: row.created_at,
+  };
+}
+
+const bookSelect = `SELECT id, aozora_card, aozora_person, title, title_kana, author, difficulty, length_label, summary,
+  source_url, text_url, xhtml_url, recommended, series_id, char_count, created_at FROM books`;
+
+export function listBooks(): BookRecord[] {
+  return (getDb().prepare(`${bookSelect} ORDER BY created_at`).all() as BookSql[]).map(mapBook);
+}
+
+export function getBookByCard(cardId: number): BookRecord | null {
+  const row = getDb().prepare(`${bookSelect} WHERE aozora_card = ?`).get(cardId) as BookSql | undefined;
+  return row ? mapBook(row) : null;
+}
+
+export function getBook(id: number): BookRecord | null {
+  const row = getDb().prepare(`${bookSelect} WHERE id = ?`).get(id) as BookSql | undefined;
+  return row ? mapBook(row) : null;
+}
+
+export function upsertBook(input: {
+  cardId: number;
+  personId?: number | null;
+  title: string;
+  titleKana?: string | null;
+  author: string;
+  difficulty?: string | null;
+  lengthLabel?: string | null;
+  summary?: string | null;
+  sourceUrl?: string | null;
+  textUrl?: string | null;
+  xhtmlUrl?: string | null;
+  recommended?: boolean;
+}): BookRecord {
+  const created = now();
+  getDb().prepare(
+    `INSERT INTO books (
+      aozora_card, aozora_person, title, title_kana, author, difficulty, length_label, summary,
+      source_url, text_url, xhtml_url, recommended, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(aozora_card) DO UPDATE SET
+      title = excluded.title,
+      title_kana = excluded.title_kana,
+      author = excluded.author,
+      difficulty = COALESCE(books.difficulty, excluded.difficulty),
+      length_label = COALESCE(books.length_label, excluded.length_label),
+      summary = COALESCE(books.summary, excluded.summary),
+      source_url = excluded.source_url,
+      text_url = excluded.text_url,
+      xhtml_url = excluded.xhtml_url,
+      recommended = MAX(books.recommended, excluded.recommended)`,
+  ).run(
+    input.cardId,
+    input.personId || null,
+    input.title,
+    input.titleKana || null,
+    input.author,
+    input.difficulty || null,
+    input.lengthLabel || null,
+    input.summary || null,
+    input.sourceUrl || null,
+    input.textUrl || null,
+    input.xhtmlUrl || null,
+    input.recommended ? 1 : 0,
+    created,
+  );
+  const book = getBookByCard(input.cardId);
+  if (!book) throw new Error("Could not save the book");
+  return book;
+}
+
+export type StoredParagraph = { text: string; speak: string; spans: { base: string; reading: string | null }[] };
+
+export type BookChapterRecord = {
+  id: number;
+  bookId: number;
+  index: number;
+  partTitle: string | null;
+  title: string;
+  paragraphs: StoredParagraph[];
+  translation: string[] | null;
+};
+
+function chapterLabel(partTitle: string | null, title: string): string {
+  if (partTitle && partTitle !== title) return `${partTitle} · ${title}`;
+  return title;
+}
+
+export function bookChapterCount(bookId: number): number {
+  return (getDb().prepare("SELECT COUNT(*) AS n FROM book_chapters WHERE book_id = ?").get(bookId) as { n: number }).n;
+}
+
+export function listBookChapters(bookId: number): { id: number; index: number; partTitle: string | null; title: string; charCount: number }[] {
+  const rows = getDb().prepare(
+    "SELECT id, idx, part_title, title, body_json FROM book_chapters WHERE book_id = ? ORDER BY idx",
+  ).all(bookId) as { id: number; idx: number; part_title: string | null; title: string; body_json: string }[];
+  return rows.map((row) => {
+    const paragraphs = parseJsonList<StoredParagraph>(row.body_json);
+    const charCount = paragraphs.reduce((sum, paragraph) => sum + [...paragraph.text].length, 0);
+    return { id: row.id, index: row.idx, partTitle: row.part_title, title: row.title, charCount };
+  });
+}
+
+export function getBookChapter(bookId: number, index: number): BookChapterRecord | null {
+  const row = getDb().prepare(
+    "SELECT id, book_id, idx, part_title, title, body_json, translation FROM book_chapters WHERE book_id = ? AND idx = ?",
+  ).get(bookId, index) as
+    | { id: number; book_id: number; idx: number; part_title: string | null; title: string; body_json: string; translation: string | null }
+    | undefined;
+  if (!row) return null;
+  let translation: string[] | null = null;
+  if (row.translation) {
+    try {
+      const parsed = JSON.parse(row.translation) as unknown;
+      translation = Array.isArray(parsed) ? parsed.map((item) => String(item)) : null;
+    } catch {
+      translation = null;
+    }
+  }
+  return {
+    id: row.id,
+    bookId: row.book_id,
+    index: row.idx,
+    partTitle: row.part_title,
+    title: row.title,
+    paragraphs: parseJsonList<StoredParagraph>(row.body_json),
+    translation,
+  };
+}
+
+export function getBookChapterById(chapterId: number): BookChapterRecord | null {
+  const row = getDb().prepare("SELECT book_id, idx FROM book_chapters WHERE id = ?").get(chapterId) as
+    | { book_id: number; idx: number }
+    | undefined;
+  return row ? getBookChapter(row.book_id, row.idx) : null;
+}
+
+function ensureBookEpisode(seriesId: number, number: number, title: string): number {
+  const db = getDb();
+  const existing = db.prepare("SELECT id FROM episodes WHERE series_id = ? AND number = ?").get(seriesId, number) as
+    | { id: number }
+    | undefined;
+  if (existing) {
+    db.prepare("UPDATE episodes SET title = ? WHERE id = ?").run(title, existing.id);
+    return existing.id;
+  }
+  const info = db.prepare(
+    "INSERT INTO episodes (series_id, number, title, cue_count, new_word_count, audio_status, created_at) VALUES (?, ?, ?, 0, 0, 'idle', ?)",
+  ).run(seriesId, number, title, now());
+  return Number(info.lastInsertRowid);
+}
+
+export function replaceBookChapters(
+  bookId: number,
+  chapters: { partTitle: string | null; title: string; paragraphs: StoredParagraph[] }[],
+): void {
+  const book = getBook(bookId);
+  if (!book) throw new Error("Book not found");
+  const db = getDb();
+  let seriesId = book.seriesId;
+  if (!seriesId) {
+    seriesId = createSeries({
+      title: book.title,
+      titleNative: book.title,
+      mediaType: "anime",
+      format: "book",
+      synopsis: book.author,
+      episodeCount: 0,
+    }).id;
+    db.prepare("UPDATE books SET series_id = ? WHERE id = ?").run(seriesId, bookId);
+  }
+  const charCount = chapters.reduce(
+    (sum, chapter) => sum + chapter.paragraphs.reduce((inner, paragraph) => inner + [...paragraph.text].length, 0),
+    0,
+  );
+  db.prepare("DELETE FROM book_chapters WHERE book_id = ?").run(bookId);
+  const insert = db.prepare(
+    "INSERT INTO book_chapters (book_id, idx, part_title, title, body_json) VALUES (?, ?, ?, ?, ?)",
+  );
+  chapters.forEach((chapter, index) => {
+    insert.run(bookId, index, chapter.partTitle, chapter.title, JSON.stringify(chapter.paragraphs));
+    ensureBookEpisode(seriesId!, index + 1, chapterLabel(chapter.partTitle, chapter.title));
+  });
+  db.prepare("UPDATE books SET char_count = ? WHERE id = ?").run(charCount, bookId);
+}
+
+export function setBookLengthLabel(bookId: number, label: string): void {
+  getDb().prepare("UPDATE books SET length_label = COALESCE(length_label, ?) WHERE id = ?").run(label, bookId);
+}
+
+export function setChapterTranslation(chapterId: number, paragraphs: string[]): void {
+  getDb().prepare("UPDATE book_chapters SET translation = ? WHERE id = ?").run(JSON.stringify(paragraphs), chapterId);
+}
+
+export function getBookProgress(bookId: number): { chapterIndex: number; paragraphIndex: number } | null {
+  const row = getDb().prepare("SELECT chapter_index, paragraph_index FROM book_progress WHERE book_id = ?").get(bookId) as
+    | { chapter_index: number; paragraph_index: number }
+    | undefined;
+  return row ? { chapterIndex: row.chapter_index, paragraphIndex: row.paragraph_index } : null;
+}
+
+export function setBookProgress(bookId: number, chapterIndex: number, paragraphIndex: number): void {
+  getDb().prepare(
+    `INSERT INTO book_progress (book_id, chapter_index, paragraph_index, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(book_id) DO UPDATE SET chapter_index = excluded.chapter_index, paragraph_index = excluded.paragraph_index, updated_at = excluded.updated_at`,
+  ).run(bookId, chapterIndex, Math.max(0, paragraphIndex), now());
+}
+
+export function addBookCards(bookId: number, chapterIndex: number, vocab: VocabItem[]): { added: number; skipped: number } {
+  const book = getBook(bookId);
+  const chapter = getBookChapter(bookId, chapterIndex);
+  if (!book?.seriesId || !chapter) return { added: 0, skipped: vocab.length };
+  const episodeId = ensureBookEpisode(book.seriesId, chapter.index + 1, chapterLabel(chapter.partTitle, chapter.title));
+  const existing = cardLemmas();
+  const fresh = vocab.filter((item) => item.lemma && !existing.has(item.lemma));
+  if (fresh.length) syncCards(episodeId, book.seriesId, fresh);
+  return { added: fresh.length, skipped: vocab.length - fresh.length };
+}
+
+export type BookListenStatus = "idle" | "pending" | "ready" | "error";
+
+export type BookListenRecord = {
+  chapterId: number;
+  status: BookListenStatus;
+  progress: string | null;
+  error: string | null;
+  parts: ListenPartRecord[];
+  cues: BookCueRecord[];
+  seconds: number;
+  bytes: number;
+  lastPlayedAt: string | null;
+  engineNote: string | null;
+  revision: number | null;
+};
+
+export type BookCueRecord = {
+  index: number;
+  text: string;
+  speak: string;
+  spans: { base: string; reading: string | null }[];
+  part: number;
+  start: number;
+  end: number;
+  offset: number;
+};
+
+function mapBookListen(row: {
+  chapter_id: number;
+  status: string;
+  progress: string | null;
+  error: string | null;
+  parts_json: string | null;
+  cues_json: string | null;
+  seconds: number | null;
+  bytes: number | null;
+  last_played_at: string | null;
+  engine_note: string | null;
+  revision: number | null;
+}): BookListenRecord {
+  const status: BookListenStatus = row.status === "pending" || row.status === "ready" || row.status === "error" ? row.status : "idle";
+  return {
+    chapterId: row.chapter_id,
+    status,
+    progress: row.progress,
+    error: row.error,
+    parts: parseJsonList<ListenPartRecord>(row.parts_json),
+    cues: parseJsonList<BookCueRecord>(row.cues_json),
+    seconds: row.seconds || 0,
+    bytes: row.bytes || 0,
+    lastPlayedAt: row.last_played_at,
+    engineNote: row.engine_note,
+    revision: row.revision,
+  };
+}
+
+export function getBookListen(chapterId: number): BookListenRecord | null {
+  const row = getDb().prepare(
+    "SELECT chapter_id, status, progress, error, parts_json, cues_json, seconds, bytes, last_played_at, engine_note, revision FROM book_listen WHERE chapter_id = ?",
+  ).get(chapterId) as Parameters<typeof mapBookListen>[0] | undefined;
+  return row ? mapBookListen(row) : null;
+}
+
+export function saveBookListen(input: {
+  chapterId: number;
+  status: BookListenStatus;
+  progress?: string | null;
+  error?: string | null;
+  parts?: ListenPartRecord[] | null;
+  cues?: BookCueRecord[] | null;
+  seconds?: number;
+  bytes?: number;
+  engineNote?: string | null;
+  revision?: number | null;
+}): void {
+  const current = getBookListen(input.chapterId);
+  const parts = input.parts === undefined ? current?.parts || [] : input.parts || [];
+  const cues = input.cues === undefined ? current?.cues || [] : input.cues || [];
+  getDb().prepare(
+    `INSERT INTO book_listen (chapter_id, status, progress, error, parts_json, cues_json, seconds, bytes, last_played_at, engine_note, revision, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(chapter_id) DO UPDATE SET
+       status = excluded.status,
+       progress = excluded.progress,
+       error = excluded.error,
+       parts_json = excluded.parts_json,
+       cues_json = excluded.cues_json,
+       seconds = excluded.seconds,
+       bytes = excluded.bytes,
+       engine_note = excluded.engine_note,
+       revision = excluded.revision,
+       updated_at = excluded.updated_at`,
+  ).run(
+    input.chapterId,
+    input.status,
+    input.progress === undefined ? current?.progress || null : input.progress,
+    input.error === undefined ? current?.error || null : input.error,
+    parts.length ? JSON.stringify(parts) : null,
+    cues.length ? JSON.stringify(cues) : null,
+    input.seconds ?? current?.seconds ?? 0,
+    input.bytes ?? current?.bytes ?? 0,
+    current?.lastPlayedAt || null,
+    input.engineNote === undefined ? current?.engineNote || null : input.engineNote,
+    input.revision === undefined ? current?.revision ?? null : input.revision,
+    now(),
+  );
+}
+
+export function touchBookPlayed(chapterId: number): void {
+  getDb().prepare("UPDATE book_listen SET last_played_at = ? WHERE chapter_id = ?").run(now(), chapterId);
+}
+
+export function clearBookListen(chapterId: number): ListenPartRecord[] {
+  const current = getBookListen(chapterId);
+  getDb().prepare("DELETE FROM book_listen WHERE chapter_id = ?").run(chapterId);
+  return current?.parts || [];
+}
+
+export function listBookEvictions(): { chapterId: number; bytes: number; playedAt: string }[] {
+  const rows = getDb().prepare(
+    "SELECT chapter_id, bytes, last_played_at, updated_at FROM book_listen WHERE status = 'ready'",
+  ).all() as { chapter_id: number; bytes: number | null; last_played_at: string | null; updated_at: string }[];
+  return rows.map((row) => ({
+    chapterId: row.chapter_id,
+    bytes: row.bytes || 0,
+    playedAt: row.last_played_at || row.updated_at,
+  }));
+}
+
+export function setBookJob(bookId: number, patch: { status: string; done?: number; total?: number; message?: string | null }): void {
+  const current = getBookJob(bookId);
+  getDb().prepare(
+    `INSERT INTO book_jobs (book_id, status, done, total, message, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(book_id) DO UPDATE SET status = excluded.status, done = excluded.done, total = excluded.total, message = excluded.message, updated_at = excluded.updated_at`,
+  ).run(
+    bookId,
+    patch.status,
+    patch.done ?? current?.done ?? 0,
+    patch.total ?? current?.total ?? 0,
+    patch.message === undefined ? current?.message || null : patch.message,
+    now(),
+  );
+}
+
+export function getBookJob(bookId: number): { status: string; done: number; total: number; message: string | null } | null {
+  const row = getDb().prepare("SELECT status, done, total, message FROM book_jobs WHERE book_id = ?").get(bookId) as
     | { status: string; done: number; total: number; message: string | null }
     | undefined;
   return row || null;
