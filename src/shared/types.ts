@@ -346,6 +346,122 @@ export type RollupBuild = {
   parts: RollupPart[];
 };
 
+export type BookProgress = {
+  chapterIndex: number;
+  paragraphIndex: number;
+  chapterTitle?: string | null;
+};
+
+export type BookShelfItem = {
+  cardId: number;
+  title: string;
+  titleKana: string | null;
+  author: string;
+  difficulty: string | null;
+  lengthLabel: string | null;
+  summary: string | null;
+  recommended: boolean;
+  startHere: boolean;
+  added: boolean;
+  chapterCount: number;
+  sourceUrl: string | null;
+  progress: BookProgress | null;
+};
+
+export type BookTocItem = {
+  index: number;
+  partTitle: string | null;
+  title: string;
+  label: string;
+  charCount: number;
+};
+
+export type BookDetail = {
+  cardId: number;
+  title: string;
+  titleKana: string | null;
+  author: string;
+  difficulty: string | null;
+  lengthLabel: string | null;
+  summary: string | null;
+  startHere: boolean;
+  sourceUrl: string | null;
+  charCount: number;
+  chapters: BookTocItem[];
+  progress: { chapterIndex: number; paragraphIndex: number } | null;
+  job: { status: string; done: number; total: number; message: string | null } | null;
+  llm: boolean;
+};
+
+export type BookParagraph = {
+  index: number;
+  text: string;
+  tokens: LineToken[];
+  translation: string | null;
+};
+
+export type BookChapterView = {
+  cardId: number;
+  title: string;
+  author: string;
+  index: number;
+  partTitle: string | null;
+  chapterTitle: string;
+  label: string;
+  paragraphs: BookParagraph[];
+  translated: boolean;
+  translationNote: string | null;
+  llm: boolean;
+  listenStatus: string;
+  chapterCount: number;
+  sourceUrl: string | null;
+};
+
+export type BookListenCue = {
+  index: number;
+  text: string;
+  part: number;
+  start: number;
+  end: number;
+  offset: number;
+  tokens: LineToken[];
+  gloss: string;
+};
+
+export type BookListenView = {
+  cardId: number;
+  bookTitle: string;
+  author: string;
+  chapterIndex: number;
+  chapterTitle: string;
+  partTitle: string | null;
+  label: string;
+  status: "idle" | "pending" | "ready" | "error";
+  progress: string | null;
+  error: string | null;
+  parts: { index: number; seconds: number; bytes: number }[];
+  cues: BookListenCue[];
+  seconds: number;
+  bytes: number;
+  engineNote: string | null;
+  estimate: { seconds: number; bytes: number };
+  nextChapter: number | null;
+  nextReady: boolean;
+  prevChapter: number | null;
+};
+
+export type BookSearchHit = {
+  cardId: number;
+  title: string;
+  titleKana: string | null;
+  author: string;
+  orthography: string | null;
+  sourceUrl: string;
+  added: boolean;
+  difficulty: string | null;
+  lengthLabel: string | null;
+};
+
 export type NewsDetail = NewsCard & {
   url: string | null;
   titleEn: string | null;

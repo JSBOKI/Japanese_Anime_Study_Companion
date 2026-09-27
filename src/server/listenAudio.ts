@@ -3,11 +3,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { audioDir, dataDir } from "./config.ts";
 import {
+  clearBookListen,
   clearListen,
   getEpisode,
   getListen,
   getSubtitle,
   getListenJob,
+  listBookEvictions,
   listListenEvictions,
   listSeriesSubtitleEpisodes,
   saveListen,
@@ -25,7 +27,7 @@ import {
   engineNote,
   estimateListen,
   listenNeedsRebuild,
-  pickEvictions,
+  pickNamedEvictions,
   planListenParts,
   shouldEnlarge,
   silenceTightenFilter,
@@ -299,17 +301,20 @@ async function freeBytes(): Promise<number> {
   return Number(stats.bavail) * Number(stats.bsize);
 }
 
-export async function makeRoom(episodeId: number, neededBytes: number): Promise<void> {
+export async function freeDiskSpace(keepId: string, neededBytes: number): Promise<void> {
   let free = await freeBytes();
   let short = bytesToFree(free, neededBytes);
   if (short <= 0) return;
-  const victims = pickEvictions(
-    (await Promise.resolve(listListenEvictions())).map((row) => ({ episodeId: row.episodeId, bytes: row.bytes, playedAt: row.playedAt })),
+  const victims = pickNamedEvictions(
+    [
+      ...listListenEvictions().map((row) => ({ id: `listen:${row.episodeId}`, bytes: row.bytes, playedAt: row.playedAt })),
+      ...listBookEvictions().map((row) => ({ id: `book:${row.chapterId}`, bytes: row.bytes, playedAt: row.playedAt })),
+    ],
     short,
-    episodeId,
+    keepId,
   );
   for (const id of victims) {
-    const removed = clearListen(id);
+    const removed = id.startsWith("book:") ? clearBookListen(Number(id.slice(5))) : clearListen(Number(id.slice(7)));
     for (const part of removed) {
       await fs.rm(part.file, { force: true }).catch(() => undefined);
     }
@@ -317,8 +322,12 @@ export async function makeRoom(episodeId: number, neededBytes: number): Promise<
   free = await freeBytes();
   short = bytesToFree(free, neededBytes);
   if (short > 0) {
-    throw new Error("Not enough room on the data disk for this episode audio. Enlarge the Render disk (it is 1 GB) or remove other listen-along files.");
+    throw new Error("Not enough room on the data disk for this audio. Enlarge the Render disk (it is 1 GB) or remove other listen-along files.");
   }
+}
+
+export async function makeRoom(episodeId: number, neededBytes: number): Promise<void> {
+  await freeDiskSpace(`listen:${episodeId}`, neededBytes);
 }
 
 export async function diskPicture(seriesId: number): Promise<{

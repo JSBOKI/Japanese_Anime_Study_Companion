@@ -63,6 +63,8 @@ import {
 import { cardsToApkg, cardsToCsv } from "./export.ts";
 import { downloadJimakuFile, listJimakuFiles, searchJimaku } from "./jimaku.ts";
 import { buildLesson, readLine } from "./lesson.ts";
+import { BookError, addBook, addChapterCards, bookChapter, bookDetail, bookShelf, saveReadingProgress, searchBooks, translateChapter, warmRecommendedShelf } from "./aozora.ts";
+import { presentBookListen, readyBookPart, startBookAudio, startChapterAudio } from "./bookAudio.ts";
 import { diskPicture, enqueueListen, enqueueSeriesListen, refreshStaleListen, seriesListenStatus } from "./listenAudio.ts";
 import { estimateListen, listenNeedsRebuild } from "./listenPlan.ts";
 import { ensureDeepDive } from "./deepDive.ts";
@@ -211,7 +213,7 @@ function toReviewCard(row: NonNullable<ReturnType<typeof getCardRow>>): ReviewCa
     seriesId: row.series_id,
     seriesTitle: row.series_title,
     episodeNumber: row.episode_number,
-    episodeTitle: row.series_format === "news" ? row.episode_title : null,
+    episodeTitle: row.series_format === "news" || row.series_format === "book" ? row.episode_title : null,
     reps: row.reps,
     intervals: intervalLabels(card),
   };
@@ -625,6 +627,120 @@ async function main() {
     res.json({ ...detail, levelStale });
   });
 
+  function raiseBook(error: unknown): never {
+    if (error instanceof BookError) throw new HttpError(error.status, error.message);
+    throw error;
+  }
+
+  app.get("/api/books", async (_req, res) => {
+    try {
+      res.json(await bookShelf());
+    } catch (error) {
+      raiseBook(error);
+    }
+  });
+
+  app.get("/api/books/search", async (req, res) => {
+    try {
+      res.json({ hits: await searchBooks(String(req.query.q || "")) });
+    } catch (error) {
+      raiseBook(error);
+    }
+  });
+
+  app.post("/api/books", async (req, res) => {
+    const cardId = Number(req.body?.cardId);
+    if (!Number.isInteger(cardId) || cardId < 1) throw new HttpError(400, "Missing the Aozora card id.");
+    try {
+      res.status(201).json(await addBook(cardId));
+    } catch (error) {
+      raiseBook(error);
+    }
+  });
+
+  app.get("/api/books/:cardId", async (req, res) => {
+    try {
+      res.json(await bookDetail(paramId(req.params.cardId)));
+    } catch (error) {
+      raiseBook(error);
+    }
+  });
+
+  app.get("/api/books/:cardId/chapters/:index", async (req, res) => {
+    try {
+      res.json(await bookChapter(paramId(req.params.cardId), paramNumber(req.params.index, 0)));
+    } catch (error) {
+      raiseBook(error);
+    }
+  });
+
+  app.post("/api/books/:cardId/progress", async (req, res) => {
+    const chapterIndex = Number(req.body?.chapterIndex);
+    const paragraphIndex = Number(req.body?.paragraphIndex);
+    if (!Number.isInteger(chapterIndex) || chapterIndex < 0) throw new HttpError(400, "Missing the chapter.");
+    try {
+      await saveReadingProgress(paramId(req.params.cardId), chapterIndex, Number.isInteger(paragraphIndex) ? paragraphIndex : 0);
+      res.json({ ok: true });
+    } catch (error) {
+      raiseBook(error);
+    }
+  });
+
+  app.post("/api/books/:cardId/chapters/:index/cards", async (req, res) => {
+    try {
+      res.json(await addChapterCards(paramId(req.params.cardId), paramNumber(req.params.index, 0)));
+    } catch (error) {
+      raiseBook(error);
+    }
+  });
+
+  app.post("/api/books/:cardId/chapters/:index/translate", async (req, res) => {
+    try {
+      res.json(await translateChapter(paramId(req.params.cardId), paramNumber(req.params.index, 0)));
+    } catch (error) {
+      raiseBook(error);
+    }
+  });
+
+  app.get("/api/books/:cardId/chapters/:index/listen", async (req, res) => {
+    try {
+      res.json(await presentBookListen(paramId(req.params.cardId), paramNumber(req.params.index, 0)));
+    } catch (error) {
+      raiseBook(error);
+    }
+  });
+
+  app.post("/api/books/:cardId/chapters/:index/listen", async (req, res) => {
+    try {
+      res.status(202).json(await startChapterAudio(paramId(req.params.cardId), paramNumber(req.params.index, 0)));
+    } catch (error) {
+      raiseBook(error);
+    }
+  });
+
+  app.get("/api/books/:cardId/chapters/:index/listen/parts/:part", (req, res) => {
+    const cardId = paramId(req.params.cardId);
+    const index = paramNumber(req.params.index, 0);
+    const part = paramId(req.params.part);
+    const file = readyBookPart(cardId, index, part);
+    if (!file) throw new HttpError(404, "That part is not ready.");
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Accept-Ranges", "bytes");
+    if (req.query.download === "1") {
+      res.download(file.file, `yomu-book-${cardId}-chapter-${index + 1}-part-${part}.mp3`);
+      return;
+    }
+    res.sendFile(file.file);
+  });
+
+  app.post("/api/books/:cardId/listen", async (req, res) => {
+    try {
+      res.status(202).json(await startBookAudio(paramId(req.params.cardId)));
+    } catch (error) {
+      raiseBook(error);
+    }
+  });
+
   app.get("/api/episodes/:id/listen", async (req, res) => {
     res.json(await presentListen(paramId(req.params.id)));
   });
@@ -926,6 +1042,7 @@ async function main() {
 
   startNewsScheduler();
   recoverSubtitleJobs();
+  warmRecommendedShelf().catch((error) => console.error("Books shelf", error));
 
   app.listen(port, host, () => {
     const llm = llmName();

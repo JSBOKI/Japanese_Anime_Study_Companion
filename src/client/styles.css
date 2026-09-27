@@ -374,8 +374,8 @@ rt { font-family: var(--ui); font-size: 0.48em; color: var(--accent); }
   right: 0;
   bottom: 0;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 2px;
   padding: 8px calc(10px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left));
   background: rgba(255, 250, 243, 0.94);
   border-top: 1px solid var(--line);
@@ -389,7 +389,9 @@ rt { font-family: var(--ui); font-size: 0.48em; color: var(--accent); }
   min-height: 52px;
   flex-direction: column;
   gap: 2px;
-  font-size: 0.78rem;
+  padding: 6px 0;
+  min-width: 0;
+  font-size: 0.68rem;
   color: var(--muted);
 }
 .tabbar a.active { color: var(--accent); }
@@ -432,6 +434,32 @@ rt { font-family: var(--ui); font-size: 0.48em; color: var(--accent); }
   min-width: 18px;
   padding: 1px 5px;
 }
+
+.search-row { display: flex; gap: 8px; align-items: center; }
+.search-row input { flex: 1; min-width: 0; }
+.book-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  text-decoration: none;
+  color: inherit;
+}
+.book-card h2 { font-family: var(--jp); font-size: 1.35rem; line-height: 1.35; }
+.start-pill {
+  justify-self: start;
+  margin: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+.toc { max-height: 50vh; overflow: auto; }
+.toc-item { width: 100%; justify-content: space-between; border-radius: 12px; }
 
 @media (max-width: 520px) {
   .episodes li, .file-row, .known-list li {

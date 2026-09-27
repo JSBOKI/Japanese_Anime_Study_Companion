@@ -194,6 +194,25 @@ export function bytesToFree(freeBytes: number, neededBytes: number, reserve = DI
   return Math.max(0, neededBytes + reserve - Math.max(0, freeBytes));
 }
 
+export function pickNamedEvictions(
+  rows: { id: string; bytes: number; playedAt: string }[],
+  needToFree: number,
+  keepId?: string,
+): string[] {
+  if (needToFree <= 0) return [];
+  const sorted = [...rows]
+    .filter((row) => row.id !== keepId)
+    .sort((a, b) => a.playedAt.localeCompare(b.playedAt) || a.id.localeCompare(b.id));
+  const ids: string[] = [];
+  let freed = 0;
+  for (const row of sorted) {
+    if (freed >= needToFree) break;
+    ids.push(row.id);
+    freed += Math.max(0, row.bytes);
+  }
+  return ids;
+}
+
 export function pickEvictions(
   rows: { episodeId: number; bytes: number; playedAt: string }[],
   needToFree: number,
