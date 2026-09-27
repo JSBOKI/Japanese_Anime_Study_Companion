@@ -22,6 +22,7 @@ export function SeriesPage() {
   const [files, setFiles] = useState<JimakuFile[] | null>(null);
   const [netflixOpen, setNetflixOpen] = useState(false);
   const [netflixDraft, setNetflixDraft] = useState("");
+  const [listenJob, setListenJob] = useState<{ status: string; message: string | null; disk: { warning: string | null } } | null>(null);
 
   async function load() {
     const data = await api<Detail>(`/api/series/${id}`);
@@ -31,6 +32,9 @@ export function SeriesPage() {
   useEffect(() => {
     api<{ jimaku: boolean }>("/api/config").then((config) => setJimaku(config.jimaku)).catch(() => undefined);
     load().catch((err: Error) => setError(err.message));
+    api<{ status: string; message: string | null; disk: { warning: string | null } }>(`/api/series/${id}/listen`)
+      .then(setListenJob)
+      .catch(() => undefined);
   }, [id]);
 
   useEffect(() => {
@@ -40,6 +44,20 @@ export function SeriesPage() {
     }, 1500);
     return () => window.clearInterval(timer);
   }, [id, detail?.subtitleFetch.status]);
+
+  useEffect(() => {
+    if (listenJob?.status !== "running") return;
+    const timer = window.setInterval(() => {
+      api<{ status: string; message: string | null; disk: { warning: string | null } }>(`/api/series/${id}/listen`)
+        .then(setListenJob)
+        .catch(() => undefined);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [id, listenJob?.status]);
+
+  async function makeAllAudio() {
+    setListenJob(await postJson(`/api/series/${id}/listen`, {}));
+  }
 
   async function upload(files: FileList | File[], episodeNumber?: number) {
     if (!files.length) return;
@@ -204,6 +222,11 @@ export function SeriesPage() {
         <button className="btn primary" type="button" disabled={busy || fetching} onClick={() => void fetchAuto()}>
           {fetching ? "Finding subtitles…" : "Get subtitles automatically"}
         </button>
+        <button className="btn" type="button" disabled={listenJob?.status === "running"} onClick={() => void makeAllAudio()}>
+          {listenJob?.status === "running" ? "Making episode audio…" : "Make audio for all episodes"}
+        </button>
+        {listenJob?.message ? <p className="hint">{listenJob.message}</p> : null}
+        {listenJob?.disk.warning ? <p className="banner">{listenJob.disk.warning}</p> : null}
         {fetching && subtitleFetch.matched === 0 ? <p className="banner">Looking for Japanese subtitles…</p> : null}
         {subtitleFetch.status === "error" ? <p className="banner bad">{subtitleFetch.message}</p> : null}
         {subtitleFetch.status === "running" && subtitleFetch.matched > 0 ? (
@@ -300,6 +323,11 @@ export function SeriesPage() {
                   Find subtitle
                 </button>
               )}
+              {episode.hasLesson || episode.subtitleName ? (
+                <Link className="btn" to={`/episodes/${episode.id}/listen`}>
+                  Listen along
+                </Link>
+              ) : null}
               {episode.netflixWatchUrl || series.netflixUrl ? (
                 <a
                   className="btn"

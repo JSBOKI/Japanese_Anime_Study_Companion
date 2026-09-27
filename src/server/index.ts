@@ -19,6 +19,9 @@ import {
   getCardRow,
   getDb,
   getEpisode,
+  getListen,
+  nextEpisodeId,
+  touchListenPlayed,
   getNewsState,
   getDeepDive,
   getNewsStory,
@@ -59,7 +62,9 @@ import {
 } from "./db.ts";
 import { cardsToApkg, cardsToCsv } from "./export.ts";
 import { downloadJimakuFile, listJimakuFiles, searchJimaku } from "./jimaku.ts";
-import { buildLesson } from "./lesson.ts";
+import { buildLesson, readLine } from "./lesson.ts";
+import { diskPicture, enqueueListen, enqueueSeriesListen, seriesListenStatus } from "./listenAudio.ts";
+import { estimateListen } from "./listenPlan.ts";
 import { ensureDeepDive } from "./deepDive.ts";
 import { ensureNewsAudio, renderSpokenFile } from "./newsAudio.ts";
 import { startRollup } from "./newsRollup.ts";
@@ -75,6 +80,43 @@ import { filesFromUpload, guessEpisodeNumber, parseSubtitle } from "./subtitles.
 import { intervalLabels, reviewCard } from "./srs.ts";
 import { loadTokenizer } from "./tokenizer.ts";
 import type { MediaType, NewsDetail, NewsList, ReviewCard } from "../shared/types.ts";
+
+async function presentListen(episodeId: number) {
+  const episode = getEpisode(episodeId);
+  if (!episode) throw new HttpError(404, "Episode not found");
+  const subtitle = getSubtitle(episodeId);
+  const cues = subtitle ? parseSubtitle(subtitle.text, subtitle.filename) : [];
+  const estimate = estimateListen(cues);
+  const listen = getListen(episodeId);
+  const level = getStudySettings().level;
+  const lessonLines = episode.lesson?.lines || [];
+  const disk = await diskPicture(episode.seriesId);
+  return {
+    episodeId: episode.id,
+    number: episode.number,
+    title: episode.title,
+    seriesTitle: episode.seriesTitle,
+    status: listen?.status || "idle",
+    progress: listen?.progress || null,
+    error: listen?.error || null,
+    parts: (listen?.parts || []).map((part) => ({ index: part.index, seconds: part.seconds, bytes: part.bytes })),
+    cues: (listen?.cues || []).map((cue) => {
+      const line = lessonLines.find((item) => item.index === cue.index && item.text === cue.text);
+      const read = line ? { tokens: line.tokens, gloss: line.gloss } : readLine(cue.text, level);
+      return {
+        ...cue,
+        tokens: read.tokens,
+        gloss: read.gloss,
+        translation: line?.translation || null,
+      };
+    }),
+    seconds: listen?.seconds || 0,
+    bytes: listen?.bytes || 0,
+    estimate,
+    nextEpisodeId: nextEpisodeId(episode.seriesId, episode.number),
+    diskWarning: disk.warning,
+  };
+}
 
 class HttpError extends Error {
   constructor(public status: number, message: string) {
@@ -579,6 +621,46 @@ async function main() {
       Boolean(rebuilt.lesson) && (rebuilt.lesson?.level !== settings.level || rebuilt.lesson?.passage !== settings.passage);
     const { cuesJson: _cues, ...detail } = rebuilt;
     res.json({ ...detail, levelStale });
+  });
+
+  app.get("/api/episodes/:id/listen", async (req, res) => {
+    res.json(await presentListen(paramId(req.params.id)));
+  });
+
+  app.post("/api/episodes/:id/listen", async (req, res) => {
+    const episode = getEpisode(paramId(req.params.id));
+    if (!episode) throw new HttpError(404, "Episode not found");
+    if (!getSubtitle(episode.id)) throw new HttpError(400, "This episode has no subtitle to read aloud.");
+    enqueueListen(episode.id);
+    res.status(202).json(await presentListen(episode.id));
+  });
+
+  app.get("/api/episodes/:id/listen/parts/:index", (req, res) => {
+    const listen = getListen(paramId(req.params.id));
+    const index = paramId(req.params.index);
+    const part = listen?.parts.find((item) => item.index === index);
+    if (!listen || listen.status !== "ready" || !part) throw new HttpError(404, "That part is not ready.");
+    touchListenPlayed(listen.episodeId);
+    if (req.query.download === "1") {
+      res.download(part.file, `yomu-listen-${listen.episodeId}-part-${part.index}.mp3`);
+      return;
+    }
+    res.sendFile(part.file);
+  });
+
+  app.get("/api/series/:id/listen", async (req, res) => {
+    const series = getSeries(paramId(req.params.id));
+    if (!series) throw new HttpError(404, "Series not found");
+    const disk = await diskPicture(series.id);
+    res.json({ ...seriesListenStatus(series.id), disk });
+  });
+
+  app.post("/api/series/:id/listen", async (req, res) => {
+    const series = getSeries(paramId(req.params.id));
+    if (!series) throw new HttpError(404, "Series not found");
+    enqueueSeriesListen(series.id);
+    const disk = await diskPicture(series.id);
+    res.status(202).json({ ...seriesListenStatus(series.id), disk });
   });
 
   app.post("/api/episodes/:id/audio", (req, res) => {

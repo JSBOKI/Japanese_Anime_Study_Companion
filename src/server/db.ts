@@ -181,11 +181,33 @@ export function getDb(): DatabaseSync {
       total INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS episode_listen (
+      episode_id INTEGER PRIMARY KEY REFERENCES episodes(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      progress TEXT,
+      error TEXT,
+      parts_json TEXT,
+      lines_json TEXT,
+      seconds REAL,
+      bytes INTEGER,
+      last_played_at TEXT,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS listen_jobs (
+      series_id INTEGER PRIMARY KEY REFERENCES series(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      done INTEGER NOT NULL DEFAULT 0,
+      total INTEGER NOT NULL DEFAULT 0,
+      message TEXT,
+      updated_at TEXT NOT NULL
+    );
   `);
   addColumn(db, "series", "netflix_url", "TEXT");
   addColumn(db, "series", "netflix_source", "TEXT");
   addColumn(db, "episodes", "netflix_watch_url", "TEXT");
   db.prepare("UPDATE episodes SET audio_status = 'idle', audio_progress = NULL WHERE audio_status = 'pending'").run();
+  db.prepare("UPDATE episode_listen SET status = 'idle', progress = NULL WHERE status = 'pending'").run();
+  db.prepare("UPDATE listen_jobs SET status = 'idle', message = NULL WHERE status = 'running'").run();
   database = db;
   return db;
 }
@@ -1337,6 +1359,171 @@ export function getRollup(id: number): { id: number; lang: string; speed: number
 export function latestRollup(): { id: number; lang: string; speed: number; status: string; message: string | null; parts: RollupPartRecord[] } | null {
   const row = getDb().prepare("SELECT id FROM news_rollups ORDER BY id DESC LIMIT 1").get() as { id: number } | undefined;
   return row ? getRollup(row.id) : null;
+}
+
+export type ListenPartRecord = { index: number; file: string; seconds: number; bytes: number };
+export type ListenCueRecord = {
+  index: number;
+  text: string;
+  speaker: string | null;
+  voice: string;
+  part: number;
+  start: number;
+  end: number;
+  offset: number;
+};
+
+export type ListenRecord = {
+  episodeId: number;
+  status: "idle" | "pending" | "ready" | "error";
+  progress: string | null;
+  error: string | null;
+  parts: ListenPartRecord[];
+  cues: ListenCueRecord[];
+  seconds: number;
+  bytes: number;
+  lastPlayedAt: string | null;
+};
+
+function mapListen(row: {
+  episode_id: number;
+  status: string;
+  progress: string | null;
+  error: string | null;
+  parts_json: string | null;
+  lines_json: string | null;
+  seconds: number | null;
+  bytes: number | null;
+  last_played_at: string | null;
+}): ListenRecord {
+  const status = row.status === "pending" || row.status === "ready" || row.status === "error" ? row.status : "idle";
+  return {
+    episodeId: row.episode_id,
+    status,
+    progress: row.progress,
+    error: row.error,
+    parts: parseJsonList<ListenPartRecord>(row.parts_json),
+    cues: parseJsonList<ListenCueRecord>(row.lines_json),
+    seconds: row.seconds || 0,
+    bytes: row.bytes || 0,
+    lastPlayedAt: row.last_played_at,
+  };
+}
+
+function parseJsonList<T>(value: string | null): T[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as T[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function getListen(episodeId: number): ListenRecord | null {
+  const row = getDb().prepare(
+    "SELECT episode_id, status, progress, error, parts_json, lines_json, seconds, bytes, last_played_at FROM episode_listen WHERE episode_id = ?",
+  ).get(episodeId) as Parameters<typeof mapListen>[0] | undefined;
+  return row ? mapListen(row) : null;
+}
+
+export function saveListen(input: {
+  episodeId: number;
+  status: ListenRecord["status"];
+  progress?: string | null;
+  error?: string | null;
+  parts?: ListenPartRecord[] | null;
+  cues?: ListenCueRecord[] | null;
+  seconds?: number;
+  bytes?: number;
+}): void {
+  const current = getListen(input.episodeId);
+  const parts = input.parts === undefined ? current?.parts || [] : input.parts || [];
+  const cues = input.cues === undefined ? current?.cues || [] : input.cues || [];
+  getDb().prepare(
+    `INSERT INTO episode_listen (episode_id, status, progress, error, parts_json, lines_json, seconds, bytes, last_played_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(episode_id) DO UPDATE SET
+       status = excluded.status,
+       progress = excluded.progress,
+       error = excluded.error,
+       parts_json = excluded.parts_json,
+       lines_json = excluded.lines_json,
+       seconds = excluded.seconds,
+       bytes = excluded.bytes,
+       updated_at = excluded.updated_at`,
+  ).run(
+    input.episodeId,
+    input.status,
+    input.progress === undefined ? current?.progress || null : input.progress,
+    input.error === undefined ? current?.error || null : input.error,
+    parts.length ? JSON.stringify(parts) : null,
+    cues.length ? JSON.stringify(cues) : null,
+    input.seconds ?? current?.seconds ?? 0,
+    input.bytes ?? current?.bytes ?? 0,
+    current?.lastPlayedAt || null,
+    now(),
+  );
+}
+
+export function touchListenPlayed(episodeId: number): void {
+  getDb().prepare("UPDATE episode_listen SET last_played_at = ? WHERE episode_id = ?").run(now(), episodeId);
+}
+
+export function clearListen(episodeId: number): ListenPartRecord[] {
+  const current = getListen(episodeId);
+  getDb().prepare("DELETE FROM episode_listen WHERE episode_id = ?").run(episodeId);
+  return current?.parts || [];
+}
+
+export function listListenEvictions(): { episodeId: number; bytes: number; playedAt: string; files: string[] }[] {
+  const rows = getDb().prepare(
+    "SELECT episode_id, bytes, last_played_at, updated_at, parts_json FROM episode_listen WHERE status = 'ready'",
+  ).all() as { episode_id: number; bytes: number | null; last_played_at: string | null; updated_at: string; parts_json: string | null }[];
+  return rows.map((row) => ({
+    episodeId: row.episode_id,
+    bytes: row.bytes || 0,
+    playedAt: row.last_played_at || row.updated_at,
+    files: parseJsonList<ListenPartRecord>(row.parts_json).map((part) => part.file),
+  }));
+}
+
+export function listSeriesSubtitleEpisodes(seriesId: number): { id: number; number: number; filename: string; text: string }[] {
+  const rows = getDb().prepare(
+    `SELECT id, number, subtitle_name, subtitle_text FROM episodes
+     WHERE series_id = ? AND subtitle_text IS NOT NULL AND subtitle_text != ''
+     ORDER BY number`,
+  ).all(seriesId) as { id: number; number: number; subtitle_name: string | null; subtitle_text: string }[];
+  return rows.map((row) => ({ id: row.id, number: row.number, filename: row.subtitle_name || "episode.srt", text: row.subtitle_text }));
+}
+
+export function nextEpisodeId(seriesId: number, number: number): number | null {
+  const row = getDb().prepare(
+    "SELECT id FROM episodes WHERE series_id = ? AND number > ? ORDER BY number LIMIT 1",
+  ).get(seriesId, number) as { id: number } | undefined;
+  return row?.id ?? null;
+}
+
+export function setListenJob(seriesId: number, patch: { status: string; done?: number; total?: number; message?: string | null }): void {
+  const current = getListenJob(seriesId);
+  getDb().prepare(
+    `INSERT INTO listen_jobs (series_id, status, done, total, message, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(series_id) DO UPDATE SET status = excluded.status, done = excluded.done, total = excluded.total, message = excluded.message, updated_at = excluded.updated_at`,
+  ).run(
+    seriesId,
+    patch.status,
+    patch.done ?? current?.done ?? 0,
+    patch.total ?? current?.total ?? 0,
+    patch.message === undefined ? current?.message || null : patch.message,
+    now(),
+  );
+}
+
+export function getListenJob(seriesId: number): { status: string; done: number; total: number; message: string | null } | null {
+  const row = getDb().prepare("SELECT status, done, total, message FROM listen_jobs WHERE series_id = ?").get(seriesId) as
+    | { status: string; done: number; total: number; message: string | null }
+    | undefined;
+  return row || null;
 }
 
 export function pruneNewsStories(beforeDay: string): { id: number; audioJaPath: string | null; audioEnPath: string | null }[] {
