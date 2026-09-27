@@ -1,4 +1,7 @@
 export const LISTEN_PAUSE_SECONDS = 0.4;
+export const LISTEN_MAX_GAP_SECONDS = 1.5;
+/** Bump when a finished MP3 would be wrong to keep serving. Older rows are rebuilt. */
+export const LISTEN_AUDIO_REVISION = 2;
 export const LISTEN_BYTES_PER_SECOND = 6_000;
 export const LISTEN_MAX_SECONDS = 25 * 60;
 export const LISTEN_MAX_BYTES = 8 * 1024 * 1024;
@@ -208,6 +211,31 @@ export function pickEvictions(
     freed += Math.max(0, row.bytes);
   }
   return ids;
+}
+
+export function listenNeedsRebuild(revision: number | null | undefined): boolean {
+  return (revision || 0) < LISTEN_AUDIO_REVISION;
+}
+
+/** Drop leading silence and shorten any quiet stretch to about 1.5 seconds. */
+export function silenceTightenFilter(): string {
+  const cap = [
+    "silenceremove=start_periods=1",
+    "start_threshold=-50dB",
+    "start_silence=0.05",
+    "stop_periods=-1",
+    "stop_threshold=-50dB",
+    `stop_duration=${LISTEN_MAX_GAP_SECONDS}`,
+    "stop_silence=0",
+    "detection=peak",
+  ].join(":");
+  const tail = [
+    "silenceremove=start_periods=1",
+    "start_threshold=-50dB",
+    "start_silence=0.08",
+    "detection=peak",
+  ].join(":");
+  return `${cap},areverse,${tail},areverse`;
 }
 
 export function shouldEnlarge(freeBytes: number, neededBytes: number, reserve = DISK_RESERVE_BYTES): boolean {

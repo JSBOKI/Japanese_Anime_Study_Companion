@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { api, postJson } from "../api";
 import { showRuby } from "../components/Japanese";
 import { attachMediaSession } from "../media";
@@ -78,7 +78,6 @@ function ListenLine({
 
 export function ListenPage() {
   const { id } = useParams();
-  const [search] = useSearchParams();
   const [listen, setListen] = useState<ListenAlong | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [furigana, setFurigana] = useState<FuriganaMode>("level");
@@ -89,7 +88,9 @@ export function ListenPage() {
   const [partIndex, setPartIndex] = useState(0);
   const [active, setActive] = useState<number | null>(null);
   const [saved, setSaved] = useState(false);
+  const [hearing, setHearing] = useState(false);
   const audio = useRef<HTMLAudioElement>(null);
+  const seek = useRef(0);
   const partRef = useRef(0);
   const listenRef = useRef<ListenAlong | null>(null);
   const speedRef = useRef(1);
@@ -130,10 +131,6 @@ export function ListenPage() {
     return () => window.clearInterval(timer);
   }, [listen?.status, id]);
 
-  useEffect(() => {
-    if (listen?.status === "ready" && search.get("play") === "1") playCue(listen.cues[0] || null);
-  }, [listen?.status, listen?.episodeId]);
-
   function globalTime(): number {
     const current = listenRef.current;
     const element = audio.current;
@@ -151,8 +148,9 @@ export function ListenPage() {
   }
 
   function onTime() {
+    const element = audio.current;
     const current = listenRef.current;
-    if (!current) return;
+    if (!element || !current || element.paused) return;
     const time = globalTime();
     let chosen: ListenCue | null = null;
     for (const cue of current.cues) {
@@ -176,6 +174,16 @@ export function ListenPage() {
     });
   }
 
+  function onReady() {
+    const element = audio.current;
+    if (!element) return;
+    const offset = seek.current;
+    if (offset > 0.05 && element.readyState >= 1) {
+      const max = Number.isFinite(element.duration) ? Math.max(0, element.duration - 0.05) : offset;
+      element.currentTime = Math.min(offset, max);
+    }
+  }
+
   function playPart(nextPart: number, offset: number) {
     const current = listenRef.current;
     const element = audio.current;
@@ -184,24 +192,27 @@ export function ListenPage() {
     const part = current.parts[bounded];
     partRef.current = bounded;
     setPartIndex(bounded);
+    element.muted = false;
+    element.volume = 1;
+    element.playbackRate = speedRef.current;
+    seek.current = offset;
     const src = `/api/episodes/${current.episodeId}/listen/parts/${part.index}`;
-    const start = () => {
-      element.currentTime = offset;
-      element.playbackRate = speedRef.current;
-      bindSession(current.cues.find((cue) => cue.part === part.index) || null);
-      void element.play();
-    };
-    if (element.src.endsWith(src) && element.readyState >= 1) start();
-    else {
-      element.src = src;
-      element.onloadedmetadata = start;
-    }
+    const absolute = new URL(src, window.location.href).href;
+    const same = element.src === absolute && element.readyState >= 1;
+    if (!same) element.src = src;
+    else if (Math.abs(element.currentTime - offset) > 0.2) element.currentTime = offset;
+    bindSession(current.cues.find((cue) => cue.part === part.index) || null);
     element.onended = () => {
       if (partRef.current < (listenRef.current?.parts.length || 1) - 1) playPart(partRef.current + 1, 0);
       else if (autoRef.current && listenRef.current?.nextEpisodeId) {
-        window.location.assign(`/episodes/${listenRef.current.nextEpisodeId}/listen?play=1`);
+        window.location.assign(`/episodes/${listenRef.current.nextEpisodeId}/listen`);
       }
     };
+    const started = element.play();
+    started.catch(() => {
+      setHearing(false);
+      setError("Playback did not start. Tap Play again. If the iPhone ringer switch is off, turn it on — that switch mutes this audio.");
+    });
   }
 
   function playCue(cue: ListenCue | null) {
@@ -212,7 +223,6 @@ export function ListenPage() {
     const current = listenRef.current;
     const partAt = current?.parts.findIndex((part) => part.index === cue.part) ?? 0;
     playPart(partAt, cue.offset);
-    markActive(cue.index);
   }
 
   function shiftPart(delta: number) {
@@ -310,8 +320,22 @@ export function ListenPage() {
             <input type="checkbox" checked={autoNext} onChange={(event) => setAutoNext(event.target.checked)} />
             Play the next episode
           </label>
-          <audio ref={audio} controls preload="metadata" onTimeUpdate={onTime} onPlay={() => bindSession(listen.cues.find((cue) => cue.index === active) || null)} />
-          <p className="meta">Part {partIndex + 1} of {listen.parts.length}. Playback continues on the lock screen.</p>
+          <audio
+            ref={audio}
+            controls
+            preload="metadata"
+            playsInline
+            onLoadedMetadata={onReady}
+            onTimeUpdate={onTime}
+            onPlaying={() => setHearing(true)}
+            onPause={() => {
+              setHearing(false);
+              setActive(null);
+            }}
+            onPlay={() => bindSession(listen.cues.find((cue) => cue.index === active) || null)}
+          />
+          <p className="meta">{hearing ? "Playing" : "Paused"}. Part {partIndex + 1} of {listen.parts.length}. The highlighted line follows the audio.</p>
+          <p className="hint">Sound uses the speaker. An iPhone on silent mutes it. This page does not use the Web Speech API.</p>
           <div className="stack">
             {listen.parts.map((part) => (
               <div key={part.index} className="row-actions">

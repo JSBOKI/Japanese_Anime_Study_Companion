@@ -1,4 +1,4 @@
-const SHELL = "yomu-shell-v1";
+const SHELL = "yomu-shell-v2";
 const OFFLINE = "yomu-offline-v1";
 const SHELL_FILES = [
   "/",
@@ -68,6 +68,13 @@ async function ranged(response, request) {
   return new Response(slice, { status: 206, statusText: "Partial Content", headers });
 }
 
+async function serveCachedRange(request) {
+  const cache = await caches.open(OFFLINE);
+  const cached = await cache.match(request.url);
+  if (!cached) return fetch(request);
+  return ranged(cached, request);
+}
+
 async function serveDrill(request) {
   const cache = await caches.open(OFFLINE);
   try {
@@ -131,6 +138,14 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
   if (isDrill(url.pathname)) {
+    // iPhone Safari stays silent when a service worker answers a Range request with 206.
+    // Let the browser talk to the server for those, so <audio> gets a normal stream.
+    // Offline, serve a slice of the saved full file instead.
+    if (request.headers.get("range")) {
+      if (self.navigator.onLine) return;
+      event.respondWith(serveCachedRange(request));
+      return;
+    }
     event.respondWith(serveDrill(request));
     return;
   }
