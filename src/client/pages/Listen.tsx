@@ -276,6 +276,7 @@ export function ListenPage() {
         </Link>
         <h1>Listen along</h1>
         <p className="hint">{listen.seriesTitle}. About {minutes} min · about {megabytes} MB.</p>
+        {listen.engineNote ? <p className="hint">{listen.engineNote}</p> : null}
       </div>
       {error ? <p className="banner bad">{error}</p> : null}
       {listen.diskWarning ? <p className="banner">{listen.diskWarning}</p> : null}

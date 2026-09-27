@@ -112,6 +112,7 @@ async function presentListen(episodeId: number) {
     }),
     seconds: listen?.seconds || 0,
     bytes: listen?.bytes || 0,
+    engineNote: listen?.engineNote || null,
     estimate,
     nextEpisodeId: nextEpisodeId(episode.seriesId, episode.number),
     diskWarning: disk.warning,

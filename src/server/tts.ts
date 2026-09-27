@@ -80,7 +80,149 @@ async function speakWith(engine: MsEdgeTTS, text: string, slow: boolean): Promis
   return audio;
 }
 
-async function openAiSpeak(text: string): Promise<Buffer> {
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function dropJaVoice(voice: string): void {
+  const engine = jaVoices.get(voice);
+  jaVoices.delete(voice);
+  try {
+    engine?.close();
+  } catch {
+    /* the socket may already be gone */
+  }
+}
+
+export type SpeechEngine = "edge" | "openai" | "google" | "gtts";
+
+export function googleTtsKey(): string | null {
+  const key = (process.env.GOOGLE_TTS_API_KEY || process.env.GOOGLE_CLOUD_API_KEY || "").trim();
+  return key || null;
+}
+
+async function googleCloudSpeak(text: string, lang: SpeechLang): Promise<Buffer> {
+  const key = googleTtsKey();
+  if (!key) throw new Error("Google Cloud TTS is not configured");
+  const voice = lang === "ja"
+    ? process.env.GOOGLE_TTS_VOICE || "ja-JP-Neural2-B"
+    : process.env.GOOGLE_TTS_VOICE_EN || "en-US-Neural2-C";
+  const res = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(key)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(20_000),
+    body: JSON.stringify({
+      input: { text: text.slice(0, 800) },
+      voice: { languageCode: lang === "ja" ? "ja-JP" : "en-US", name: voice },
+      audioConfig: { audioEncoding: "MP3", sampleRateHertz: 24000 },
+    }),
+  });
+  if (!res.ok) throw new Error(`Google Cloud TTS ${res.status}`);
+  const body = (await res.json()) as { audioContent?: string };
+  if (!body.audioContent) throw new Error("Google Cloud TTS returned no audio");
+  const audio = Buffer.from(body.audioContent, "base64");
+  if (audio.length < 400) throw new Error("Google Cloud TTS returned an empty clip");
+  return audio;
+}
+
+async function gttsSpeak(text: string, lang: SpeechLang): Promise<Buffer> {
+  const url = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${lang}&q=${encodeURIComponent(text.slice(0, 180))}`;
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36" },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!res.ok) throw new Error(`Google Translate speech ${res.status}`);
+  const audio = Buffer.from(await res.arrayBuffer());
+  if (audio.length < 400) throw new Error("Google Translate speech returned an empty clip");
+  return audio;
+}
+
+const EDGE_COOLDOWN_MS = 10 * 60_000;
+let edgeUnavailableUntil = 0;
+let edgeFailureStreak = 0;
+
+function edgeCoolingDown(): boolean {
+  return Date.now() < edgeUnavailableUntil;
+}
+
+function noteEdgeSuccess(): void {
+  edgeFailureStreak = 0;
+}
+
+function noteEdgeFailure(): void {
+  edgeFailureStreak += 1;
+  if (edgeFailureStreak >= 2) edgeUnavailableUntil = Date.now() + EDGE_COOLDOWN_MS;
+}
+
+async function edgeVoiceOnce(text: string, voice: string): Promise<Buffer> {
+  return locks.ja.run(async () => {
+    let engine = jaVoices.get(voice);
+    if (!engine) {
+      engine = new MsEdgeTTS();
+      await engine.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+      jaVoices.set(voice, engine);
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        dropJaVoice(voice);
+        reject(new Error("Edge TTS timed out"));
+      }, 15_000);
+    });
+    const speech = speakWith(engine, text, false);
+    speech.catch(() => undefined);
+    try {
+      return await Promise.race([speech, timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  });
+}
+
+/** One Japanese line. Edge is tried first, then OpenAI, Google Cloud, and Google Translate. */
+export async function speakJapanese(text: string, voice: string): Promise<{ audio: Buffer; engine: SpeechEngine }> {
+  let edgeError: Error | null = null;
+  const skipEdge = edgeCoolingDown();
+  for (let attempt = 0; attempt < 3 && !skipEdge; attempt++) {
+    try {
+      const audio = await edgeVoiceOnce(text, voice);
+      noteEdgeSuccess();
+      return { audio, engine: "edge" };
+    } catch (error) {
+      edgeError = error instanceof Error ? error : new Error("Edge TTS failed");
+      dropJaVoice(voice);
+      if (attempt < 2) await sleep(500 * (attempt + 1));
+    }
+  }
+  if (edgeError) noteEdgeFailure();
+  const tried = ["Microsoft Edge"];
+  if (process.env.OPENAI_API_KEY) {
+    tried.push("OpenAI");
+    try {
+      return { audio: await openAiSpeak(text, "Read this Japanese dialogue naturally."), engine: "openai" };
+    } catch (error) {
+      console.error("OpenAI speech failed", error);
+    }
+  }
+  if (googleTtsKey()) {
+    tried.push("Google Cloud");
+    try {
+      return { audio: await googleCloudSpeak(text, "ja"), engine: "google" };
+    } catch (error) {
+      console.error("Google Cloud speech failed", error);
+    }
+  }
+  tried.push("Google Translate");
+  try {
+    return { audio: await gttsSpeak(text, "ja"), engine: "gtts" };
+  } catch (error) {
+    console.error("Google Translate speech failed", error);
+  }
+  const edgeDetail = edgeError?.message.includes("empty") ? " Edge returned an empty clip." : "";
+  throw new Error(`No speech engine could read this line.${edgeDetail} Tried ${tried.join(", ")}.`);
+}
+
+async function openAiSpeak(text: string, instructions?: string): Promise<Buffer> {
   const res = await fetch("https://api.openai.com/v1/audio/speech", {
     method: "POST",
     headers: {
@@ -92,10 +234,13 @@ async function openAiSpeak(text: string): Promise<Buffer> {
       voice: process.env.OPENAI_TTS_VOICE || "nova",
       input: text.slice(0, 800),
       response_format: "mp3",
+      ...(instructions ? { instructions } : {}),
     }),
   });
   if (!res.ok) throw new Error(`OpenAI TTS ${res.status}: ${await res.text()}`);
-  return Buffer.from(await res.arrayBuffer());
+  const audio = Buffer.from(await res.arrayBuffer());
+  if (audio.length < 400) throw new Error("OpenAI TTS returned an empty clip");
+  return audio;
 }
 
 function ffmpegBuffer(args: string[], input?: Buffer): Promise<Buffer> {

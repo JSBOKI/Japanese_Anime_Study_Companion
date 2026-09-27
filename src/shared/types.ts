@@ -187,6 +187,7 @@ export type ListenAlong = {
   cues: ListenCue[];
   seconds: number;
   bytes: number;
+  engineNote: string | null;
   estimate: { seconds: number; bytes: number };
   nextEpisodeId: number | null;
   diskWarning: string | null;

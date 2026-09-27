@@ -4,12 +4,28 @@ import {
   JA_LISTEN_VOICES,
   assignVoices,
   bytesToFree,
+  engineNote,
   estimateListen,
   lineAtTime,
   pickEvictions,
   planListenParts,
+  spokenLine,
   timeForLine,
 } from "../src/server/listenPlan.ts";
+
+test("music notes and bare punctuation are not sent to speech", () => {
+  assert.equal(spokenLine("♪♪～"), null);
+  assert.equal(spokenLine("……。"), null);
+  assert.equal(spokenLine("{\\an8}♪"), null);
+  assert.equal(spokenLine("(黒崎 一護)あ～…。なんとか言わんかい！"), "あ～…。なんとか言わんかい！");
+  assert.equal(spokenLine("(ｻｲﾚﾝ)"), "サイレン");
+  assert.equal(spokenLine("…ﾒｼ｡"), "…メシ。");
+  assert.equal(spokenLine("ｷｬｯ！"), "キャッ！");
+  assert.match(engineNote(["edge"], 4), /Microsoft Edge/);
+  assert.match(engineNote(["edge"], 4), /4 lines/);
+  assert.match(engineNote(["gtts"], 0), /Google Translate/);
+  assert.match(engineNote(["gtts"], 0), /could not read/);
+});
 
 test("speakers keep a voice, and lines without names alternate", () => {
   const named = assignVoices([
