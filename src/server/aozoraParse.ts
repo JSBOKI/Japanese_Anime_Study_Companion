@@ -109,7 +109,8 @@ function takeHeadings(line: string): { headings: { rank: "大" | "中" | "小"; 
   rest = rest.replace(/［＃[^］]*］/g, "");
   rest = rest.replace(/※/g, "");
   const trimmed = rest.replace(/^[\s\u3000]+/, "").replace(/[\s\u3000]+$/, "");
-  const same = headings.some((heading) => cleanTitle(trimmed) === heading.title);
+  const visible = cleanTitle(parseRuby(trimmed).text);
+  const same = headings.some((heading) => visible === heading.title);
   return { headings, rest: same ? "" : trimmed };
 }
 

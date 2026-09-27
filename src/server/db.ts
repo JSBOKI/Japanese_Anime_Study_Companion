@@ -219,6 +219,7 @@ export function getDb(): DatabaseSync {
       recommended INTEGER NOT NULL DEFAULT 0,
       series_id INTEGER,
       char_count INTEGER NOT NULL DEFAULT 0,
+      parse_revision INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS book_chapters (
@@ -270,6 +271,7 @@ export function getDb(): DatabaseSync {
   db.prepare("UPDATE listen_jobs SET status = 'idle', message = NULL WHERE status = 'running'").run();
   db.prepare("UPDATE book_listen SET status = 'idle', progress = NULL WHERE status = 'pending'").run();
   db.prepare("UPDATE book_jobs SET status = 'idle', message = NULL WHERE status = 'running'").run();
+  addColumn(db, "books", "parse_revision", "INTEGER NOT NULL DEFAULT 0");
   database = db;
   return db;
 }
@@ -1616,6 +1618,7 @@ export type BookRecord = {
   recommended: boolean;
   seriesId: number | null;
   charCount: number;
+  parseRevision: number;
   createdAt: string;
 };
 
@@ -1635,6 +1638,7 @@ type BookSql = {
   recommended: number;
   series_id: number | null;
   char_count: number;
+  parse_revision: number | null;
   created_at: string;
 };
 
@@ -1655,12 +1659,13 @@ function mapBook(row: BookSql): BookRecord {
     recommended: Boolean(row.recommended),
     seriesId: row.series_id,
     charCount: row.char_count || 0,
+    parseRevision: row.parse_revision || 0,
     createdAt: row.created_at,
   };
 }
 
 const bookSelect = `SELECT id, aozora_card, aozora_person, title, title_kana, author, difficulty, length_label, summary,
-  source_url, text_url, xhtml_url, recommended, series_id, char_count, created_at FROM books`;
+  source_url, text_url, xhtml_url, recommended, series_id, char_count, parse_revision, created_at FROM books`;
 
 export function listBooks(): BookRecord[] {
   return (getDb().prepare(`${bookSelect} ORDER BY created_at`).all() as BookSql[]).map(mapBook);
@@ -1839,7 +1844,7 @@ export function replaceBookChapters(
     insert.run(bookId, index, chapter.partTitle, chapter.title, JSON.stringify(chapter.paragraphs));
     ensureBookEpisode(seriesId!, index + 1, chapterLabel(chapter.partTitle, chapter.title));
   });
-  db.prepare("UPDATE books SET char_count = ? WHERE id = ?").run(charCount, bookId);
+  db.prepare("UPDATE books SET char_count = ?, parse_revision = ? WHERE id = ?").run(charCount, 2, bookId);
 }
 
 export function setBookLengthLabel(bookId: number, label: string): void {

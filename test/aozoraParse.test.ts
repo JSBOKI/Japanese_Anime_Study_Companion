@@ -94,6 +94,14 @@ test("speech cues use the furigana reading and split on sentences", () => {
   assert.equal(cues[1].text, "先生も行った。");
 });
 
+test("a heading that carries ruby is not repeated as the first paragraph", () => {
+  const chapters = parseAozoraText("［＃３字下げ］一、午后《ごご》の授業［＃「一、午后の授業」は中見出し］\n\nジョバンニは活版所へ行っていた。");
+  assert.equal(chapters.length, 1);
+  assert.equal(chapters[0].title, "一、午后の授業");
+  assert.equal(chapters[0].paragraphs[0].text, "ジョバンニは活版所へ行っていた。");
+  assert.equal(chapters[0].paragraphs[0].speak.includes("ごご"), false);
+});
+
 test("XHTML ruby and headings become the same chapters", () => {
   const html = `
     <div class="main_text">

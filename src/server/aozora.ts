@@ -161,7 +161,8 @@ async function openBook(cardId: number): Promise<BookRecord> {
     });
     book = getBook(book.id) || book;
   }
-  if (bookChapterCount(book.id) > 0) return getBook(book.id) || book;
+  const fresh = getBook(book.id) || book;
+  if (bookChapterCount(fresh.id) > 0 && fresh.parseRevision >= 2) return fresh;
   const text = await workText(book);
   const chapters = parseAozoraText(text);
   if (!chapters.length) throw new BookError(502, "This work had no chapters to read.");
