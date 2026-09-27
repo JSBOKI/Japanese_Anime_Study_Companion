@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { audioDir } from "./config.ts";
 import { getNewsStory, setNewsAudioPath } from "./db.ts";
@@ -31,23 +32,28 @@ async function concatOnce(files: string[], dest: string): Promise<void> {
   await ffmpeg(args);
 }
 
-export async function concatMp3(files: string[], dest: string): Promise<void> {
+export async function concatMp3(files: string[], dest: string, chunkSize = 20): Promise<void> {
+  if (!files.length) throw new Error("No audio clips to join");
   if (files.length === 1) {
-    await fs.copyFile(files[0], dest);
+    if (path.resolve(files[0]) !== path.resolve(dest)) await fs.copyFile(files[0], dest);
     return;
   }
-  if (files.length <= 20) {
+  if (files.length <= chunkSize) {
     await concatOnce(files, dest);
     return;
   }
-  const parts: string[] = [];
-  const scratch = path.dirname(files[0]);
-  for (let offset = 0; offset < files.length; offset += 20) {
-    const part = path.join(scratch, `part-${offset}.mp3`);
-    await concatOnce(files.slice(offset, offset + 20), part);
-    parts.push(part);
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "yomu-concat-"));
+  try {
+    const parts: string[] = [];
+    for (let offset = 0; offset < files.length; offset += chunkSize) {
+      const part = path.join(scratch, `part-${offset}.mp3`);
+      await concatOnce(files.slice(offset, offset + chunkSize), part);
+      parts.push(part);
+    }
+    await concatMp3(parts, dest, chunkSize);
+  } finally {
+    await fs.rm(scratch, { recursive: true, force: true });
   }
-  await concatMp3(parts, dest);
 }
 
 function spokenText(title: string, body: string, lang: "ja" | "en"): string {
