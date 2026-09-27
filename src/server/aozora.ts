@@ -220,7 +220,7 @@ export async function searchBooks(query: string): Promise<(CatalogWork & { added
     const picked = recommendedByCard(hit.cardId);
     return {
       ...hit,
-      added: Boolean(known),
+      added: Boolean(known) || Boolean(picked),
       difficulty: known?.difficulty || picked?.difficulty || null,
       lengthLabel: known?.lengthLabel || picked?.lengthLabel || null,
     };
